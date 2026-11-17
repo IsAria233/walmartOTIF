@@ -1,6 +1,6 @@
 """Auth service: login, JWT issuing, roles.
 
-Roles: dispute_associate, compliance_manager, dc_ops_viewer, admin.
+Roles: dispute_associate, compliance_manager, admin.
 Accounts are seeded for the demo (no public registration).
 """
 from fastapi import FastAPI

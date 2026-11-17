@@ -2,7 +2,7 @@
 
 Mock systems exposed as read APIs: fine records (Retail Link scorecard),
 disputes (HighRadius), POs with versions, ASNs, appointment history,
-gate logs, receiving records, carrier tracking, weather.
+gate logs, receiving records, weather.
 """
 from fastapi import FastAPI
 
@@ -17,6 +17,6 @@ def health():
 # TODO: SQLAlchemy models + PostgreSQL session
 # TODO: read APIs for each mock system (used by agent tools and frontend)
 # TODO: rules engine: scope check, delivery window, cause -> accountability,
-#       supplier-month score and fine recompute
+#       per-line fine (non-compliant cases x cost x 3%)
 # TODO: pre-invoice scanner that flags projected fines
 # TODO: investigation cases, line outcomes, approvals (role-checked)
