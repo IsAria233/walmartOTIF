@@ -179,13 +179,38 @@ def test_audit_parent_deletions_are_restricted(db):
     fact = FindingFact(finding=finding, fact_key="receipt", fact_value="8")
     evidence = EvidenceRecord(evidence_type="receipt", snapshot={"cases": 8})
     link = EvidenceLink(finding_fact=fact, evidence_record=evidence, role="supports")
+    from app.db.models import CaseOutcome, Evaluation, PolicyConfiguration
+    policy = PolicyConfiguration(
+        policy_version="0.1",
+        effective_from=datetime(1970, 1, 1, tzinfo=timezone.utc),
+        manager_approval_threshold=Decimal("500.00"),
+        fine_rate=Decimal("0.030000"),
+    )
+    evaluation = Evaluation(
+        investigation_case=case,
+        finding=finding,
+        version_number=1,
+        policy_version="0.1",
+        result={"lines": []},
+        calculation_inputs={},
+        calculation_outputs={},
+    )
+    case_outcome = CaseOutcome(
+        investigation_case=case,
+        evaluation=evaluation,
+        status="pending_approval",
+    )
     outcome = LineOutcome(
+        case_outcome=case_outcome,
+        investigation_case_id=case.id,
+        evaluated_line_key=str(fine.id),
         finding=finding,
         outcome="partial",
         policy_version="0.1",
         accountable_party="supplier",
         original_amount=Decimal("20.00"),
         corrected_amount=Decimal("10.00"),
+        calculated_at=datetime.now(timezone.utc),
     )
     approval = Approval(line_outcome=outcome, approval_type="associate")
     decision = ApprovalDecision(
@@ -200,7 +225,7 @@ def test_audit_parent_deletions_are_restricted(db):
         received_at=datetime.now(timezone.utc),
         received_cases=8,
     )
-    db.add_all([case, finding, fact, evidence, link, outcome, approval, decision, receipt])
+    db.add_all([case, finding, fact, evidence, link, policy, evaluation, case_outcome, outcome, approval, decision, receipt])
     db.commit()
 
     for model, ident in [
@@ -317,6 +342,7 @@ def test_valid_case_and_attachment_ownership_relationships_work(db):
         fine_record=fine_a,
         origin="pre_invoice_scan",
         scan_rule="R2",
+        status="closed",
     )
     attachment = Attachment(dispute=dispute_a, dispute_line=line_a, filename="proof.pdf")
     db.add_all([case, scan_case, attachment])
@@ -326,3 +352,202 @@ def test_valid_case_and_attachment_ownership_relationships_work(db):
     assert scan_case.dispute_line_id is None
     assert attachment.dispute_id == dispute_a.id
     assert attachment.dispute_line_id == line_a.id
+
+
+def test_active_case_creation_reuses_and_closed_case_allows_new_history(db):
+    from app.services.case_service import get_or_create_active_case
+
+    supplier, dc, _ = make_dc_pair(db)
+    fine = make_fine(db, supplier, dc)
+    first, created = get_or_create_active_case(db, fine_record_id=fine.id, origin="pre_invoice_scan")
+    assert created is True
+    again, created = get_or_create_active_case(db, fine_record_id=fine.id, origin="pre_invoice_scan")
+    assert created is False
+    assert again.id == first.id
+    first.status = "closed"
+    db.flush()
+    historical, created = get_or_create_active_case(db, fine_record_id=fine.id, origin="pre_invoice_scan")
+    assert created is True
+    assert historical.id != first.id
+
+
+def test_case_creation_rejects_dispute_line_owned_by_another_supplier(db):
+    from app.services.case_service import get_or_create_active_case
+    from app.services.exceptions import InvalidRequest
+
+    supplier, dc, _ = make_dc_pair(db)
+    other_supplier = Supplier(supplier_code=f"S-{uuid.uuid4()}", name="Other")
+    fine = make_fine(db, supplier, dc)
+    dispute = Dispute(supplier=other_supplier, submitted_at=datetime.now(timezone.utc))
+    db.add_all([other_supplier, dispute])
+    db.flush()
+    line = DisputeLine(dispute=dispute, fine_record=fine)
+    db.add(line)
+    db.flush()
+    with pytest.raises(InvalidRequest, match="supplier must match"):
+        get_or_create_active_case(db, fine_record_id=fine.id, origin="supplier_dispute", dispute_line_ids=[line.id])
+    assert db.query(InvestigationCase).filter_by(fine_record_id=fine.id).count() == 0
+
+
+def test_handed_off_case_can_return_to_investigation(db):
+    from app.services.case_service import get_or_create_active_case, transition_case
+
+    supplier, dc, _ = make_dc_pair(db)
+    fine = make_fine(db, supplier, dc)
+    case, _ = get_or_create_active_case(db, fine_record_id=fine.id, origin="pre_invoice_scan")
+    transition_case(db, case_id=case.id, target="investigating")
+    transition_case(db, case_id=case.id, target="handed_off", reason="Insufficient evidence")
+    transition_case(db, case_id=case.id, target="investigating")
+    assert case.status == "investigating"
+    assert len(case.status_events) == 4
+
+
+def test_case_lifecycle_and_versioned_evaluation_outcome_approval(db):
+    from app.db.models import CaseOutcome, Evaluation, PolicyConfiguration
+    from app.services.case_service import transition_case
+    from app.services.evaluation_service import create_evaluation
+    from app.services.finding_service import create_finding
+    from app.services.outcome_service import create_outcome
+    from app.services.approval_service import decide_line
+    from app.services.exceptions import Conflict
+
+    supplier, dc, _ = make_dc_pair(db)
+    fine = make_fine(db, supplier, dc)
+    case = InvestigationCase(fine_record=fine, origin="pre_invoice_scan", status="pending")
+    db.add(case)
+    db.flush()
+    transition_case(db, case_id=case.id, target="investigating")
+    with pytest.raises(Conflict):
+        transition_case(db, case_id=case.id, target="closed")
+    finding = create_finding(db, case_id=case.id, payload={"summary": "records reviewed", "cause_code": "C1"})
+    assert finding.version_number == 1
+    assert case.status == "findings_submitted"
+    db.add(PolicyConfiguration(
+        policy_version="0.1",
+        effective_from=datetime(1970, 1, 1, tzinfo=timezone.utc),
+        manager_approval_threshold=Decimal("500.00"),
+        fine_rate=Decimal("0.030000"),
+    ))
+    db.flush()
+    evaluation = create_evaluation(db, case_id=case.id, finding_id=finding.id)
+    assert evaluation.version_number == 1
+    assert evaluation.result["lines"][0]["corrected_amount"] == "0.60"
+    outcome = create_outcome(db, case_id=case.id, evaluation_id=evaluation.id)
+    assert outcome.status == "pending_approval"
+    line = outcome.line_outcomes[0]
+    approval = line.approvals[0]
+    with pytest.raises(Conflict):
+        transition_case(db, case_id=case.id, target="closed")
+    decision = decide_line(db, outcome_id=outcome.id, line_outcome_id=line.id,
+        stage="associate", decision="approved", auth_user_id=uuid.uuid4())
+    assert decision.decision == "approved"
+    assert line.approval_status == "approved"
+    assert outcome.status == "approved"
+    assert case.status == "closed"
+    with pytest.raises(Conflict):
+        transition_case(db, case_id=case.id, target="investigating")
+
+
+def test_rejected_approval_preserves_decision_and_requires_revision(db):
+    from app.db.models import PolicyConfiguration
+    from app.services.case_service import transition_case
+    from app.services.evaluation_service import create_evaluation
+    from app.services.finding_service import create_finding
+    from app.services.outcome_service import create_outcome
+    from app.services.approval_service import decide_line
+
+    supplier, dc, _ = make_dc_pair(db)
+    fine = make_fine(db, supplier, dc)
+    case = InvestigationCase(fine_record=fine, origin="pre_invoice_scan", status="investigating")
+    db.add(case)
+    db.add(PolicyConfiguration(policy_version="0.1", effective_from=datetime(1970, 1, 1, tzinfo=timezone.utc), manager_approval_threshold=Decimal("500"), fine_rate=Decimal("0.03")))
+    db.flush()
+    finding = create_finding(db, case_id=case.id, payload={"summary": "first version", "cause_code": "C1"})
+    evaluation = create_evaluation(db, case_id=case.id, finding_id=finding.id)
+    outcome = create_outcome(db, case_id=case.id, evaluation_id=evaluation.id)
+    line = outcome.line_outcomes[0]
+    decide_line(db, outcome_id=outcome.id, line_outcome_id=line.id, stage="associate", decision="rejected", auth_user_id=uuid.uuid4())
+    assert line.approval_status == "rejected"
+    assert outcome.status == "rejected"
+    assert case.status == "revision_required"
+    assert len(line.approvals[0].decisions) == 1
+    transition_case(db, case_id=case.id, target="investigating")
+    second = create_finding(db, case_id=case.id, payload={"summary": "revised version", "cause_code": "C1"})
+    assert second.version_number == 2
+    assert finding.summary == "first version"
+    second_evaluation = create_evaluation(db, case_id=case.id, finding_id=second.id)
+    assert second_evaluation.version_number == 2
+
+
+def test_manager_approval_is_required_above_configured_threshold(db):
+    from app.db.models import PolicyConfiguration
+    from app.services.case_service import transition_case
+    from app.services.evaluation_service import create_evaluation
+    from app.services.finding_service import create_finding
+    from app.services.outcome_service import create_outcome
+    from app.services.approval_service import decide_line
+    from app.services.exceptions import Conflict
+
+    supplier, dc, _ = make_dc_pair(db)
+    line = make_po_line(db, supplier, dc, "PO-MANAGER")
+    fine = FineRecord(po_line=line, po_version_used=1, ordered_cases=10, received_cases=8,
+        non_compliant_cases=2, system_accountability="supplier", original_amount=Decimal("1000.00"),
+        case_cost_snapshot=Decimal("10.0000"), fine_rate=Decimal("0.030000"))
+    case = InvestigationCase(fine_record=fine, origin="pre_invoice_scan", status="investigating")
+    db.add_all([fine, case, PolicyConfiguration(policy_version="0.1",
+        effective_from=datetime(1970, 1, 1, tzinfo=timezone.utc),
+        manager_approval_threshold=Decimal("500.00"), fine_rate=Decimal("0.030000"))])
+    db.flush()
+    finding = create_finding(db, case_id=case.id, payload={"cause_code": "C1"})
+    evaluation = create_evaluation(db, case_id=case.id, finding_id=finding.id)
+    outcome = create_outcome(db, case_id=case.id, evaluation_id=evaluation.id)
+    line_outcome = outcome.line_outcomes[0]
+    user_id = uuid.uuid4()
+    with pytest.raises(Conflict):
+        decide_line(db, outcome_id=outcome.id, line_outcome_id=line_outcome.id,
+            stage="manager", decision="approved", auth_user_id=user_id)
+    decide_line(db, outcome_id=outcome.id, line_outcome_id=line_outcome.id,
+        stage="associate", decision="approved", auth_user_id=user_id)
+    assert line_outcome.approval_status == "pending_manager_approval"
+    assert case.status == "awaiting_approval"
+    decide_line(db, outcome_id=outcome.id, line_outcome_id=line_outcome.id,
+        stage="manager", decision="approved", auth_user_id=user_id)
+    assert outcome.status == "approved"
+    assert case.status == "closed"
+
+
+def test_evaluation_fails_explicitly_when_no_policy_configuration_applies(db):
+    from app.services.evaluation_service import create_evaluation
+    from app.services.finding_service import create_finding
+    from app.services.exceptions import PolicyUnavailable
+
+    supplier, dc, _ = make_dc_pair(db)
+    fine = make_fine(db, supplier, dc)
+    case = InvestigationCase(fine_record=fine, origin="pre_invoice_scan", status="investigating")
+    db.add(case)
+    db.flush()
+    finding = create_finding(db, case_id=case.id, payload={})
+    with pytest.raises(PolicyUnavailable, match="No applicable policy"):
+        create_evaluation(db, case_id=case.id, finding_id=finding.id)
+
+
+def test_evaluator_rejects_unsupported_or_conflicting_policy_classification():
+    from app.db.models import FineRecord, InvestigationFinding, PolicyConfiguration
+    from app.services.exceptions import PolicyUnavailable
+    from app.services.policy_evaluator import evaluate_line
+
+    fine = FineRecord(id=uuid.uuid4(), system_accountability="supplier", non_compliant_cases=2,
+        case_cost_snapshot=Decimal("10.0000"), original_amount=Decimal("0.60"))
+    policy = PolicyConfiguration(policy_version="0.1", fine_rate=Decimal("0.03"))
+    with pytest.raises(PolicyUnavailable, match="outside the supported"):
+        evaluate_line(fine, InvestigationFinding(cause_code="C6"), policy)
+    with pytest.raises(PolicyUnavailable, match="conflicts"):
+        evaluate_line(fine, InvestigationFinding(cause_code="C4"), policy)
+    finding = InvestigationFinding(cause_code="C3")
+    assert evaluate_line(fine, finding, policy)["corrected_amount"] == "0.60"
+
+
+def test_context_row_serializer_accepts_missing_active_case():
+    from app.services.context_service import row
+
+    assert row(None) is None

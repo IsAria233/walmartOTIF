@@ -1,8 +1,8 @@
 """Import all model modules and expose the model classes."""
 from . import approvals, disputes, investigations, logistics
-from .approvals import Approval, ApprovalDecision, LineOutcome
+from .approvals import Approval, ApprovalDecision, LineOutcome, PolicyConfiguration
 from .disputes import Attachment, Dispute, DisputeLine, FineRecord
-from .investigations import EvidenceLink, EvidenceRecord, FindingFact, InvestigationCase, InvestigationFinding
+from .investigations import (CaseOutcome, CaseStatusEvent, DisputeLineCase, Evaluation, EvidenceLink, EvidenceRecord, FindingFact, InvestigationCase, InvestigationCaseTrigger, InvestigationFinding, PreInvoiceScanResult)
 from .logistics import (
     ASN, ASNLine, AppointmentEvent, Delivery, DeliveryLine, DistributionCenter,
     GateLog, POLine, POLineVersion, PurchaseOrder, ReceivingRecord, Supplier, WeatherAlert,
@@ -34,5 +34,8 @@ __all__ = [
     "EvidenceLink",
     "LineOutcome",
     "Approval",
-    "ApprovalDecision",
+    "ApprovalDecision", "PolicyConfiguration", "DisputeLineCase",
+    "InvestigationCaseTrigger", "Evaluation", "CaseOutcome",
+    "CaseStatusEvent",
+    "PreInvoiceScanResult",
 ]

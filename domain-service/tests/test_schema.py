@@ -12,7 +12,7 @@ from app.db.models import (
 
 def test_schema_has_all_domain_tables_and_configures_relationships():
     configure_mappers()
-    assert len(Base.metadata.tables) == 25
+    assert len(Base.metadata.tables) == 32
     assert "agent_runs" not in Base.metadata.tables
     assert "users" not in Base.metadata.tables
 
@@ -23,7 +23,7 @@ def test_key_relationships_and_constraint_choices():
     assert Delivery.lines.property.mapper.class_ is DeliveryLine
     assert DeliveryLine.receiving_records.property.mapper.class_ is ReceivingRecord
     assert InvestigationCase.findings.property.mapper.class_ is InvestigationFinding
-    assert InvestigationFinding.line_outcome.property.mapper.class_ is LineOutcome
+    assert InvestigationFinding.line_outcomes.property.mapper.class_ is LineOutcome
     assert LineOutcome.approvals.property.mapper.class_ is Approval
     assert Approval.decisions.property.mapper.class_ is ApprovalDecision
 
