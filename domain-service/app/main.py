@@ -14,7 +14,6 @@ def health():
     return {"service": "domain-service", "status": "ok"}
 
 
-# TODO: SQLAlchemy models + PostgreSQL session
 # TODO: read APIs for each mock system (used by agent tools and frontend)
 # TODO: rules engine: scope check, delivery window, cause -> accountability,
 #       per-line fine (non-compliant cases x cost x 3%)
