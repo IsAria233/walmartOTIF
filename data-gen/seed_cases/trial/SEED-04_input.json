@@ -1,0 +1,86 @@
+{
+  "case_id": "SEED-04",
+  "trigger": "pre_invoice_scan",
+  "scan_rule": "R2",
+  "po": {
+    "po_number": "4471004",
+    "line": 1,
+    "item": "Laundry detergent 4ct",
+    "supplier": "Clearwater Home Products",
+    "ship_from": "Shreveport, LA",
+    "dc": "DC 7012 (North Texas)",
+    "freight_terms": "prepaid",
+    "channel": "stores",
+    "mabd": "2026-10-21",
+    "standard_transit_days": 1,
+    "case_cost": 30.0,
+    "versions": [
+      {
+        "version": 1,
+        "issued_at": "2026-10-08T14:00",
+        "ordered_cases": 1500,
+        "issued_by": "Walmart replenishment"
+      }
+    ]
+  },
+  "asn": {
+    "asn_id": "ASN-55104",
+    "ship_ts": "2026-10-19T16:20",
+    "shipped_cases": 1500
+  },
+  "appointment_history": [
+    {
+      "event_id": "APT-9004-1",
+      "ts": "2026-10-16T09:40",
+      "action": "created",
+      "by": "supplier",
+      "slot": "2026-10-20T11:00",
+      "note": ""
+    }
+  ],
+  "gate_log": [
+    {
+      "gate_id": "GATE-30014",
+      "check_in": "2026-10-20T10:44",
+      "carrier": "Bayou Freightways",
+      "trailer": "BF-1182"
+    }
+  ],
+  "receiving": [
+    {
+      "receipt_id": "RCV-70014",
+      "ts": "2026-10-20T14:10",
+      "cases": 1380,
+      "exception": null,
+      "note": ""
+    },
+    {
+      "receipt_id": "RCV-70019",
+      "ts": "2026-10-22T09:30",
+      "cases": 120,
+      "exception": null,
+      "note": "Pallet located in staging lane 4. Same delivery, trailer BF-1182, 2026-10-20."
+    }
+  ],
+  "weather": [
+    {
+      "alert_id": "WX-1020-NTX",
+      "date": "2026-10-20",
+      "area": "North Texas",
+      "type": "Dense fog advisory"
+    }
+  ],
+  "fine_record": {
+    "fine_id": "FINE-1004",
+    "metric": "in_full",
+    "po_version_used": 1,
+    "ordered_cases": 1500,
+    "received_cases": 1380,
+    "recorded_arrival": "2026-10-20T10:44",
+    "non_compliant_cases": 120,
+    "system_accountability": "supplier",
+    "amount": 108.0,
+    "status": "projected"
+  },
+  "dispute": null
+}

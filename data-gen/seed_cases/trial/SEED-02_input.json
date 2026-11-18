@@ -1,0 +1,92 @@
+{
+  "case_id": "SEED-02",
+  "trigger": "supplier_dispute",
+  "po": {
+    "po_number": "4471002",
+    "line": 1,
+    "item": "Paper towels 6pk",
+    "supplier": "Northfield Paper Co.",
+    "ship_from": "Tulsa, OK",
+    "dc": "DC 7012 (North Texas)",
+    "freight_terms": "prepaid",
+    "channel": "stores",
+    "mabd": "2026-10-14",
+    "standard_transit_days": 2,
+    "case_cost": 18.5,
+    "versions": [
+      {
+        "version": 1,
+        "issued_at": "2026-10-02T09:00",
+        "ordered_cases": 1200,
+        "issued_by": "Walmart replenishment"
+      }
+    ]
+  },
+  "asn": {
+    "asn_id": "ASN-55102",
+    "ship_ts": "2026-10-11T15:30",
+    "shipped_cases": 1200
+  },
+  "appointment_history": [
+    {
+      "event_id": "APT-9002-1",
+      "ts": "2026-10-09T11:00",
+      "action": "created",
+      "by": "supplier",
+      "slot": "2026-10-13T10:00",
+      "note": ""
+    },
+    {
+      "event_id": "APT-9002-2",
+      "ts": "2026-10-12T16:05",
+      "action": "rescheduled",
+      "by": "DC",
+      "slot": "2026-10-15T09:00",
+      "note": "dock capacity"
+    }
+  ],
+  "gate_log": [
+    {
+      "gate_id": "GATE-30012",
+      "check_in": "2026-10-15T08:51",
+      "carrier": "Red River Transport",
+      "trailer": "RR-2090"
+    }
+  ],
+  "receiving": [
+    {
+      "receipt_id": "RCV-70012",
+      "ts": "2026-10-15T10:40",
+      "cases": 1200,
+      "exception": null,
+      "note": ""
+    }
+  ],
+  "weather": [],
+  "fine_record": {
+    "fine_id": "FINE-1002",
+    "metric": "on_time",
+    "po_version_used": 1,
+    "ordered_cases": 1200,
+    "received_cases": 1200,
+    "recorded_arrival": "2026-10-15T08:51",
+    "non_compliant_cases": 1200,
+    "system_accountability": "supplier",
+    "amount": 666.0
+  },
+  "dispute": {
+    "dispute_id": "DSP-2002",
+    "submitted": "2026-11-13",
+    "reason_category": "Walmart caused the delay",
+    "amount_disputed": 666.0,
+    "reason_text": "We had a confirmed delivery appointment for October 13. Your DC moved it to October 16 the day before. We delivered at the first time you allowed.",
+    "attachments": [
+      {
+        "attachment_id": "ATT-2002-1",
+        "type": "APPOINTMENT_EMAIL",
+        "filename": "appointment_change.txt",
+        "text": "From: scheduling@dc7012.example\nTo: logistics@northfieldpaper.example\nDate: 2026-10-12 16:05\nSubject: Appointment change - PO 4471002\n\nYour delivery appointment for PO 4471002 on 2026-10-13 10:00 has been moved to 2026-10-15 09:00 due to dock capacity. No action is required from you.\n"
+      }
+    ]
+  }
+}

@@ -1,0 +1,91 @@
+{
+  "case_id": "SEED-05",
+  "trigger": "supplier_dispute",
+  "po": {
+    "po_number": "4471005",
+    "line": 1,
+    "item": "Sparkling water 12pk",
+    "supplier": "Summit Beverage Group",
+    "ship_from": "Oklahoma City, OK",
+    "dc": "DC 7012 (North Texas)",
+    "freight_terms": "prepaid",
+    "channel": "stores",
+    "mabd": "2026-10-15",
+    "standard_transit_days": 1,
+    "case_cost": 16.0,
+    "versions": [
+      {
+        "version": 1,
+        "issued_at": "2026-10-01T09:15",
+        "ordered_cases": 2400,
+        "issued_by": "Walmart replenishment"
+      },
+      {
+        "version": 2,
+        "issued_at": "2026-10-06T11:40",
+        "ordered_cases": 2000,
+        "issued_by": "Walmart replenishment",
+        "note": "forecast reduction"
+      }
+    ]
+  },
+  "asn": {
+    "asn_id": "ASN-55105",
+    "ship_ts": "2026-10-13T08:00",
+    "shipped_cases": 2000
+  },
+  "appointment_history": [
+    {
+      "event_id": "APT-9005-1",
+      "ts": "2026-10-09T15:00",
+      "action": "created",
+      "by": "supplier",
+      "slot": "2026-10-14T09:00",
+      "note": ""
+    }
+  ],
+  "gate_log": [
+    {
+      "gate_id": "GATE-30015",
+      "check_in": "2026-10-14T08:50",
+      "carrier": "Prairie Haul",
+      "trailer": "PH-6021"
+    }
+  ],
+  "receiving": [
+    {
+      "receipt_id": "RCV-70015",
+      "ts": "2026-10-14T11:05",
+      "cases": 2000,
+      "exception": null,
+      "note": ""
+    }
+  ],
+  "weather": [],
+  "fine_record": {
+    "fine_id": "FINE-1005",
+    "metric": "in_full",
+    "po_version_used": 1,
+    "ordered_cases": 2400,
+    "received_cases": 2000,
+    "recorded_arrival": "2026-10-14T08:50",
+    "non_compliant_cases": 400,
+    "system_accountability": "supplier",
+    "amount": 192.0
+  },
+  "dispute": {
+    "dispute_id": "DSP-2005",
+    "submitted": "2026-11-14",
+    "reason_category": "PO was changed",
+    "amount_disputed": 192.0,
+    "reason_text": "Walmart reduced this PO to 2000 cases on October 6. We shipped and you received exactly 2000. The fine is based on the old quantity.",
+    "attachments": [
+      {
+        "attachment_id": "ATT-2005-1",
+        "type": "PO_COPY",
+        "filename": "po_4471005_v2.txt",
+        "text": "PURCHASE ORDER 4471005        Version 2\nIssued: 2026-10-06 11:40 by Walmart replenishment\nSupplier: Summit Beverage Group\nShip to: Walmart DC 7012\nMABD: 2026-10-15\nLine 1: Sparkling water 12pk    Quantity: 2000 cases\nChange note: quantity reduced from 2400 (forecast reduction)\n"
+      }
+    ]
+  }
+}

@@ -1,0 +1,91 @@
+{
+  "case_id": "SEED-01",
+  "trigger": "supplier_dispute",
+  "po": {
+    "po_number": "4471001",
+    "line": 1,
+    "item": "Canned tomatoes 12ct",
+    "supplier": "Brightwell Foods",
+    "ship_from": "Houston, TX",
+    "dc": "DC 7012 (North Texas)",
+    "freight_terms": "prepaid",
+    "channel": "stores",
+    "mabd": "2026-10-08",
+    "standard_transit_days": 2,
+    "case_cost": 24.0,
+    "versions": [
+      {
+        "version": 1,
+        "issued_at": "2026-09-28T10:00",
+        "ordered_cases": 800,
+        "issued_by": "Walmart replenishment"
+      }
+    ]
+  },
+  "asn": {
+    "asn_id": "ASN-55101",
+    "ship_ts": "2026-10-08T09:10",
+    "shipped_cases": 800
+  },
+  "appointment_history": [
+    {
+      "event_id": "APT-9001-1",
+      "ts": "2026-10-07T13:20",
+      "action": "created",
+      "by": "supplier",
+      "slot": "2026-10-10T08:00",
+      "note": "first requested slot"
+    }
+  ],
+  "gate_log": [
+    {
+      "gate_id": "GATE-30011",
+      "check_in": "2026-10-10T07:42",
+      "carrier": "Gulf Line Freight",
+      "trailer": "GL-4471"
+    }
+  ],
+  "receiving": [
+    {
+      "receipt_id": "RCV-70011",
+      "ts": "2026-10-10T09:30",
+      "cases": 800,
+      "exception": null,
+      "note": ""
+    }
+  ],
+  "weather": [
+    {
+      "alert_id": "WX-1009-NTX",
+      "date": "2026-10-09",
+      "area": "North Texas",
+      "type": "Severe thunderstorm watch"
+    }
+  ],
+  "fine_record": {
+    "fine_id": "FINE-1001",
+    "metric": "on_time",
+    "po_version_used": 1,
+    "ordered_cases": 800,
+    "received_cases": 800,
+    "recorded_arrival": "2026-10-10T07:42",
+    "non_compliant_cases": 800,
+    "system_accountability": "supplier",
+    "amount": 576.0
+  },
+  "dispute": {
+    "dispute_id": "DSP-2001",
+    "submitted": "2026-11-12",
+    "reason_category": "Outside supplier control",
+    "amount_disputed": 576.0,
+    "reason_text": "Our truck was delayed by the severe storms across North Texas on October 9. This was outside our control and the fine should be waived in full.",
+    "attachments": [
+      {
+        "attachment_id": "ATT-2001-1",
+        "type": "BOL",
+        "filename": "bol_4471001.txt",
+        "text": "BILL OF LADING                         BOL# 77310-B\nShip from: Brightwell Foods, Houston, TX\nShip date: 2026-10-08\nShip to:   Walmart DC 7012\nPO: 4471001\nCarrier:   Gulf Line Freight\nCases: 800\nCarrier signature: R. Salas   2026-10-08 09:05\n"
+      }
+    ]
+  }
+}
