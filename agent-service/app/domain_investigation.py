@@ -7,7 +7,7 @@ import httpx
 from pydantic import BaseModel, ValidationError
 
 from .domain_evidence import DomainEvidenceReader
-from .investigation import ApprovalStatus, Evidence, EvidenceSource, PolicyReviewRequired
+from .investigation import ApprovalStatus, Evidence, EvidenceSource, HandoffDetails, PolicyReviewRequired
 
 READY_TO_INVESTIGATE = {"pending", "investigating", "revision_required", "handed_off"}
 
@@ -72,6 +72,13 @@ class DomainInvestigationClient(DomainEvidenceReader):
             json={"evaluation_id": evaluation_id, "reuse_existing": True},
         )
         return self._id(response)
+
+    def record_handoff(self, case_id: str, run_id: str, reason: str, details: HandoffDetails) -> str:
+        payload = self._request(
+            "PUT", f"/api/v1/internal/investigation-cases/{case_id}/handoffs/{run_id}",
+            json={"reason": reason, "details": details},
+        )
+        return self._id(payload)
 
     def read_approval_status(self, case_id: str, outcome_id: str) -> ApprovalStatus:
         path = f"/api/v1/investigation-cases/{case_id}/outcome"

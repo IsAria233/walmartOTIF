@@ -19,14 +19,14 @@ from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db.models import (
-    ASN, ASNLine, Approval, ApprovalDecision, AppointmentEvent, CaseOutcome,
+    ASN, ASNLine, Approval, ApprovalDecision, AppointmentEvent, CaseOutcome, CaseStatusEvent,
     Delivery, Dispute, DisputeLine, DisputeLineCase, DistributionCenter,
     Evaluation, FineRecord, InvestigationCase, InvestigationCaseTrigger,
     InvestigationFinding, LineOutcome, POLine, PolicyConfiguration,
     PreInvoiceScanResult, PurchaseOrder, Supplier,
 )
 from app.services.approval_service import decide_line
-from app.services.case_service import get_or_create_active_case, transition_case
+from app.services.case_service import get_or_create_active_case, record_agent_handoff, transition_case
 from app.services.dispute_submission_service import submit_dispute
 from app.services.evaluation_service import create_evaluation
 from app.services.exceptions import Conflict, InvalidRequest
@@ -54,7 +54,7 @@ def pg_engine():
             "SELECT current_database(), current_user, (SELECT version_num FROM alembic_version)"
         )).one()
         assert database == DATABASE_NAME and role == "stephenhuang"
-        assert revision == "0005_dc_country"
+        assert revision == "0006_agent_handoff"
     yield engine
     engine.dispose()
 
@@ -184,6 +184,34 @@ def test_postgres_active_case_creation_is_serialized_and_reused(pg_engine):
 
     reused = _concurrent(pg_engine, create, count=4)
     assert all(tag == "ok" and value[0] == results[0][1][0] and value[1] is False for tag, value in reused)
+
+
+def test_postgres_concurrent_agent_handoff_records_one_event(pg_engine):
+    fine_id = _seed_fine(pg_engine)
+    run_id = uuid.uuid4()
+    with Session(pg_engine) as session, session.begin():
+        case, _ = get_or_create_active_case(session, fine_record_id=fine_id, origin="pre_invoice_scan")
+        case_id = case.id
+
+    def handoff(session):
+        event = record_agent_handoff(
+            session, case_id=case_id, run_id=run_id, reason="Missing ASN",
+            details={"evidence_counts": {"asn": 0}, "missing_sources": ["asn"], "finding_id": None},
+        )
+        return event.id
+
+    results = _concurrent(pg_engine, handoff)
+    assert [tag for tag, _ in results] == ["ok", "ok"]
+    assert results[0][1] == results[1][1]
+    with Session(pg_engine) as session:
+        assert session.get(InvestigationCase, case_id).status == "handed_off"
+        events = session.scalars(select(CaseStatusEvent).where(
+            CaseStatusEvent.investigation_case_id == case_id,
+            CaseStatusEvent.to_status == "handed_off",
+        )).all()
+        assert len(events) == 1
+        assert events[0].from_status == "pending"
+        assert events[0].handoff_details["missing_sources"] == ["asn"]
 
 
 def test_postgres_concurrent_finding_version_allocation_is_serialized(pg_engine):

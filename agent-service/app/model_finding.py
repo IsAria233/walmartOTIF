@@ -51,8 +51,9 @@ Choose a cause only from the supplied candidate causes. Use the following projec
 
 Return concise facts with evidence_ids copied exactly from the supplied record_id values.
 Include the records needed to support the conclusion. Use the fine snapshot for comparison.
-If records are missing, contradictory, or ambiguous, return a null cause_code and explain
-what a human should check in handoff_reason. Provide confidence between zero and one.
+Return a null cause_code when records are missing, contradictory, or ambiguous, or when
+confidence is low. Explain what a human should check in handoff_reason. Provide confidence
+between zero and one.
 Report factual findings for Domain review. Leave monetary and approval decisions to Domain.
 """
 

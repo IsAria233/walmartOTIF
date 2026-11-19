@@ -24,6 +24,9 @@ class ApiDomain(SeedDomain):
         self.evaluation_id = str(uuid4())
         self.outcome_id = str(uuid4())
         self.fail_outcome_once = False
+        self.handoff_id = str(uuid4())
+        self.lose_handoff_response = False
+        self.handoff_calls = 0
 
     def get_case(self, case_id):
         if case_id != str(self.case.id):
@@ -55,6 +58,15 @@ class ApiDomain(SeedDomain):
     def read_approval_status(self, case_id, outcome_id):
         assert outcome_id == self.outcome_id
         return self.approval_status
+
+    def record_handoff(self, case_id, run_id, reason, details):
+        self.handoff_calls += 1
+        if not self.handoffs:
+            super().record_handoff(case_id, run_id, reason, details)
+        if self.lose_handoff_response:
+            self.lose_handoff_response = False
+            raise DomainRequestError(503, "Lost handoff response")
+        return self.handoff_id
 
 
 class InvestigationApiTests(unittest.TestCase):
@@ -122,3 +134,19 @@ class InvestigationApiTests(unittest.TestCase):
         self.assertEqual(unavailable.status_code, 503)
         self.assertEqual(unavailable.json()["detail"]["code"], "model_not_configured")
         self.assertFalse(self.domain.writes)
+
+    def test_retry_recovers_after_domain_saved_handoff(self):
+        self.domain.require_review = True
+        self.domain.lose_handoff_response = True
+        first = self.client.post("/investigations", json=self.case_body, headers=self.key)
+        self.assertEqual(first.status_code, 503, first.text)
+        retry = self.client.post("/investigations", json=self.case_body, headers=self.key)
+        self.assertEqual(retry.status_code, 200, retry.text)
+        run = retry.json()
+        self.assertEqual(run["status"], "needs_review")
+        self.assertEqual(run["handoff_id"], self.domain.handoff_id)
+        self.assertIsNone(run["outcome_id"])
+        self.assertEqual(self.domain.writes, ["finding", "evaluation"])
+        self.assertEqual(self.domain.handoff_calls, 2)
+        self.assertEqual(len(self.domain.handoffs), 1)
+        self.assertEqual(self.client.get(f"/investigations/{run['run_id']}").json(), run)

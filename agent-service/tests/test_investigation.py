@@ -24,6 +24,7 @@ class SeedDomain:
     def __init__(self):
         self.fixture = json.loads(SEED_CASE.read_text(encoding="utf-8"))
         self.writes = []
+        self.handoffs = []
         self.approval_status = "pending_approval"
         self.evidence_reads = 0
         self.require_review = False
@@ -71,6 +72,10 @@ class SeedDomain:
         assert (case_id, outcome_id) == ("SEED-02", "outcome-02")
         return self.approval_status
 
+    def record_handoff(self, case_id, run_id, reason, details):
+        self.handoffs.append((case_id, run_id, reason, details))
+        return "handoff-02"
+
 
 def seed_finding(case, plan, evidence):
     event = next(row for row in evidence["appointment_history"] if row["facts"]["by"] == "DC")
@@ -117,13 +122,21 @@ class InvestigationTests(unittest.TestCase):
         self.assertEqual(result["result"]["status"], "out_of_scope")
         self.assertEqual(domain.evidence_reads, 0)
         self.assertFalse(domain.writes)
+        self.assertFalse(domain.handoffs)
 
     def test_missing_asn_hands_off_before_writes(self):
         domain = SeedDomain()
         del domain.fixture["asn"]
-        _, _, result = self.start(domain)
+        _, config, result = self.start(domain)
         self.assertEqual(result["result"]["status"], "needs_review")
         self.assertIn("asn", result["result"]["handoff_reason"])
+        self.assertEqual(result["result"]["handoff_id"], "handoff-02")
+        (case_id, run_id, reason, details), = domain.handoffs
+        self.assertEqual((case_id, run_id), ("SEED-02", config["configurable"]["thread_id"]))
+        self.assertEqual(reason, "Missing evidence: asn")
+        self.assertEqual(details["missing_sources"], ["asn"])
+        self.assertEqual(details["evidence_counts"], {"asn": 0, "appointment_history": 2, "gate_log": 1})
+        self.assertIsNone(details["finding_id"])
         self.assertFalse(domain.writes)
 
     def test_unknown_citation_hands_off_before_writes(self):
@@ -144,6 +157,7 @@ class InvestigationTests(unittest.TestCase):
         self.assertEqual(result["result"]["status"], "needs_review")
         self.assertEqual(domain.writes, ["finding", "evaluation"])
         self.assertNotIn("outcome_id", result["result"])
+        self.assertEqual(domain.handoffs[0][3]["finding_id"], "finding-02")
 
     @unittest.skipUnless(os.getenv("AGENT_CHECKPOINT_TEST_DSN"), "PostgreSQL test DSN is not configured")
     def test_postgres_checkpoint_survives_process_restart(self):

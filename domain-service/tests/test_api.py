@@ -271,12 +271,43 @@ def test_case_and_dispute_api_contracts_and_pagination(monkeypatch):
             assert second_case.status_code == 201
             second_case_id = second_case.json()["id"]
             assert client.patch(f"/api/v1/investigation-cases/{second_case_id}/status", json={"status": "investigating"}).status_code == 200
-            second_finding = client.post(f"/api/v1/investigation-cases/{second_case_id}/findings", json={"cause_code": "C1"})
+            run_id = str(uuid.uuid4())
+            second_finding = client.post(
+                f"/api/v1/investigation-cases/{second_case_id}/findings", json={"cause_code": "C2", "agent_run_id": run_id},
+            )
             assert second_finding.status_code == 201
             foreign_evaluation = client.post(f"/api/v1/investigation-cases/{second_case_id}/evaluate", json={"finding_id": finding_id})
             assert foreign_evaluation.status_code == 422
             foreign_outcome = client.post(f"/api/v1/investigation-cases/{second_case_id}/outcome", json={"evaluation_id": evaluation_id})
             assert foreign_outcome.status_code == 422
+
+            second_finding_id = second_finding.json()["id"]
+            policy = client.post(f"/api/v1/investigation-cases/{second_case_id}/evaluate", json={"finding_id": second_finding_id})
+            assert policy.status_code == 409 and policy.json()["error"]["code"] == "policy_unavailable"
+
+            handoffs = f"/api/v1/internal/investigation-cases/{second_case_id}/handoffs"
+            handoff_path = f"{handoffs}/{run_id}"
+            details = {"finding_id": second_finding_id, "evidence_counts": {}, "missing_sources": []}
+            handoff_body = {"reason": policy.json()["error"]["message"], "details": details}
+            assert client.put(f"{handoffs}/{uuid.uuid4()}", json=handoff_body).status_code == 409
+            response = client.put(handoff_path, json=handoff_body)
+            assert response.status_code == 200, response.text
+            handoff = response.json()
+            assert handoff["agent_run_id"] == run_id
+            assert handoff["from_status"] == "findings_submitted"
+            assert handoff["handoff_details"] == details
+            assert client.put(handoff_path, json=handoff_body).json() == handoff
+            assert client.get(f"/api/v1/investigation-cases/{second_case_id}").json()["handoff"] == handoff
+            manual_queue = client.get("/api/v1/investigation-cases?status=handed_off").json()
+            assert [item["id"] for item in manual_queue["items"]] == [second_case_id]
+
+            reopened = client.patch(
+                f"/api/v1/investigation-cases/{second_case_id}/status", json={"status": "investigating"},
+            )
+            assert reopened.status_code == 200
+            assert client.put(handoff_path, json=handoff_body).json() == handoff
+            assert client.get(f"/api/v1/investigation-cases/{second_case_id}").json()["handoff"] is None
+            assert client.get("/api/v1/investigation-cases?status=handed_off").json()["total"] == 0
 
             missing = str(uuid.uuid4())
             for path in [
@@ -307,7 +338,7 @@ def test_all_registered_api_operations_have_explicit_openapi_response_contracts(
     # FastAPI versions may keep include_router as a lazy router entry in
     # app.routes; inspect the actual registered APIRoute objects directly.
     operations = router.routes
-    assert len(operations) == 32
+    assert len(operations) == 33
     assert all(route.response_model is not None for route in operations)
     document = app.openapi()
     openapi_operations = [
@@ -316,5 +347,5 @@ def test_all_registered_api_operations_have_explicit_openapi_response_contracts(
         for method, operation in path_item.items()
         if method in {"get", "post", "patch", "put", "delete"}
     ]
-    assert len(openapi_operations) == 32
+    assert len(openapi_operations) == 33
     assert all("200" in operation["responses"] or "201" in operation["responses"] for _, _, operation in openapi_operations)

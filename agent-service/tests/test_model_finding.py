@@ -14,6 +14,9 @@ from test_domain_evidence import domain_context, record_id
 
 
 class TrialDomain:
+    def record_handoff(self, case_id, run_id, reason, details):
+        return "test-handoff"
+
     def __init__(self, reader):
         self.reader = reader
         self.writes = []
@@ -121,6 +124,7 @@ class ModelFindingTests(unittest.TestCase):
     def test_model_handoff_and_invalid_citation_do_not_write(self):
         for finding in (
             {**demo_finding(None, []), "handoff_reason": "Evidence conflicts"},
+            {**demo_finding(None, []), "handoff_reason": " "},
             demo_finding("C2", ["fabricated-evidence-id"]),
         ):
             with self.subTest(finding=finding):
@@ -129,6 +133,7 @@ class ModelFindingTests(unittest.TestCase):
                 }))
                 result, writes = run_trial(2, analyzer)
                 self.assertEqual(result["result"]["status"], "needs_review")
+                self.assertTrue(result["result"]["handoff_reason"].strip())
                 self.assertFalse(writes)
 
     def test_refusal_and_api_error_handoff(self):

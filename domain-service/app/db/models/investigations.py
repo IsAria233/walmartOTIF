@@ -67,6 +67,7 @@ class CaseStatusEvent(Base):
     __table_args__ = (
         CheckConstraint("to_status IN ('pending', 'investigating', 'findings_submitted', 'awaiting_approval', 'handed_off', 'revision_required', 'closed')", name="ck_case_status_events_to_status"),
         Index("ix_case_status_events_case_time", "investigation_case_id", "occurred_at"),
+        UniqueConstraint("investigation_case_id", "agent_run_id", name="uq_case_status_events_agent_run"),
     )
     id: Mapped[uuid.UUID] = uuid_pk()
     investigation_case_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("investigation_cases.id", ondelete="RESTRICT"), nullable=False)
@@ -74,6 +75,8 @@ class CaseStatusEvent(Base):
     to_status: Mapped[str] = mapped_column(String(50), nullable=False)
     reason: Mapped[str | None] = mapped_column(Text)
     actor_user_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True))  # external Auth Service UUID
+    agent_run_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True))
+    handoff_details: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     investigation_case: Mapped[InvestigationCase] = relationship(back_populates="status_events", passive_deletes="all")
 

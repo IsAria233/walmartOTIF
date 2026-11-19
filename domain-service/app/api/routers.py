@@ -14,9 +14,9 @@ from sqlalchemy.orm import Session
 
 from app.api.auth import AuthenticatedUser, get_current_user
 from app.api.schemas import (
-    ASNPageResponse, ASNResponse, ApprovalDecisionRequest, ApprovalDecisionResponse,
+    ASNPageResponse, ASNResponse, AgentHandoffRequest, ApprovalDecisionRequest, ApprovalDecisionResponse,
     ApprovalPageResponse, AppointmentPageResponse, CaseCreateRequest,
-    CaseQueueResponse, CaseResponse, CaseStatusRequest, DeliveryResponse,
+    CaseDetailResponse, CaseQueueResponse, CaseResponse, CaseStatusEventResponse, CaseStatusRequest, DeliveryResponse,
     DisputeCreateRequest, DisputeDetailResponse, DisputePageResponse,
     EvaluationCreateRequest, EvaluationPageResponse, EvaluationResponse,
     FindingCreateRequest, FindingPageResponse, FindingResponse, FinePageResponse,
@@ -42,6 +42,7 @@ from app.services import (
     submit_dispute, transition_case,
 )
 from app.services.exceptions import DomainError
+from app.services.case_service import current_handoff, record_agent_handoff
 
 router = APIRouter(prefix="/api/v1")
 
@@ -125,12 +126,12 @@ def create_case(payload: CaseCreateRequest, response: Response, db: Session = De
     return case
 
 
-@router.get("/investigation-cases/{case_id}", response_model=CaseResponse)
+@router.get("/investigation-cases/{case_id}", response_model=CaseDetailResponse)
 def get_case(case_id: uuid.UUID, db: Session = Depends(get_db)):
     case = db.get(InvestigationCase, case_id)
     if case is None:
         raise NotFound("Investigation Case not found")
-    return case
+    return {**serialize(case), "handoff": current_handoff(db, case)}
 
 
 @router.patch("/investigation-cases/{case_id}/status", response_model=CaseResponse)
@@ -138,6 +139,21 @@ def patch_case_status(case_id: uuid.UUID, payload: CaseStatusRequest, db: Sessio
     with db.begin():
         case = transition_case(db, case_id=case_id, target=payload.status, reason=payload.reason)
     return case
+
+
+@router.put(
+    "/internal/investigation-cases/{case_id}/handoffs/{run_id}",
+    response_model=CaseStatusEventResponse,
+)
+def put_agent_handoff(
+    case_id: uuid.UUID, run_id: uuid.UUID, payload: AgentHandoffRequest, db: Session = Depends(get_db),
+):
+    with db.begin():
+        event = record_agent_handoff(
+            db, case_id=case_id, run_id=run_id, reason=payload.reason,
+            details=payload.details.model_dump(mode="json"),
+        )
+    return event
 
 
 @router.post("/disputes", response_model=DisputeDetailResponse, status_code=201)

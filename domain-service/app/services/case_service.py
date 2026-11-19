@@ -7,7 +7,10 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.db.models import CaseOutcome, CaseStatusEvent, Dispute, DisputeLine, DisputeLineCase, FineRecord, InvestigationCase, LineOutcome, POLine, PurchaseOrder
+from app.db.models import (
+    CaseOutcome, CaseStatusEvent, Dispute, DisputeLine, DisputeLineCase, FineRecord,
+    InvestigationCase, InvestigationFinding, LineOutcome, POLine, PurchaseOrder,
+)
 from app.services.exceptions import Conflict, InvalidRequest, NotFound
 
 TRANSITIONS = {
@@ -129,12 +132,32 @@ def get_or_create_active_case(
     return active, created
 
 
-def transition_case(session: Session, *, case_id: uuid.UUID, target: str, reason: str | None = None, actor_user_id: uuid.UUID | None = None) -> InvestigationCase:
+def _lock_case(session: Session, case_id: uuid.UUID) -> InvestigationCase:
     case = session.execute(
         select(InvestigationCase).where(InvestigationCase.id == case_id).with_for_update()
     ).scalar_one_or_none()
     if case is None:
         raise NotFound("Investigation Case not found")
+    return case
+
+
+def _append_status_event(
+    session: Session, case: InvestigationCase, target: str, *, reason: str | None,
+    actor_user_id: uuid.UUID | None = None, agent_run_id: uuid.UUID | None = None,
+    handoff_details: dict | None = None,
+) -> CaseStatusEvent:
+    event = CaseStatusEvent(
+        investigation_case_id=case.id, from_status=case.status, to_status=target, reason=reason,
+        actor_user_id=actor_user_id, agent_run_id=agent_run_id, handoff_details=handoff_details,
+    )
+    case.status = target
+    session.add(event)
+    session.flush()
+    return event
+
+
+def transition_case(session: Session, *, case_id: uuid.UUID, target: str, reason: str | None = None, actor_user_id: uuid.UUID | None = None) -> InvestigationCase:
+    case = _lock_case(session, case_id)
     if target not in TRANSITIONS.get(case.status, set()):
         raise Conflict(f"Case transition from {case.status} to {target} is not allowed")
     if target == "findings_submitted" and not case.findings:
@@ -148,12 +171,41 @@ def transition_case(session: Session, *, case_id: uuid.UUID, target: str, reason
             raise Conflict("At least one applicable Line Outcome is required to close a Case")
         if any(line.approval_status != "approved" for line in current.line_outcomes):
             raise Conflict("Every Line Outcome in the current Outcome must be approved")
-    previous = case.status
-    case.status = target
-    session.add(CaseStatusEvent(investigation_case_id=case_id, from_status=previous,
-                                to_status=target, reason=reason, actor_user_id=actor_user_id))
-    session.flush()
+    _append_status_event(session, case, target, reason=reason, actor_user_id=actor_user_id)
     return case
+
+
+def record_agent_handoff(
+    session: Session, *, case_id: uuid.UUID, run_id: uuid.UUID, reason: str, details: dict,
+) -> CaseStatusEvent:
+    case = _lock_case(session, case_id)
+    existing = session.scalar(select(CaseStatusEvent).where(
+        CaseStatusEvent.investigation_case_id == case_id, CaseStatusEvent.agent_run_id == run_id,
+    ))
+    if existing is not None:
+        return existing
+
+    finding_id = details.get("finding_id")
+    if case.status == "findings_submitted":
+        latest = session.scalar(select(InvestigationFinding).where(
+            InvestigationFinding.investigation_case_id == case_id,
+        ).order_by(InvestigationFinding.version_number.desc()).limit(1))
+        if latest is None or str(latest.id) != finding_id or latest.agent_run_id != run_id:
+            raise Conflict("Handoff must reference the latest Finding from this Agent run")
+    elif finding_id is not None or case.status not in {"pending", "investigating", "revision_required", "handed_off"}:
+        raise Conflict(f"Case status {case.status} does not allow this handoff")
+
+    return _append_status_event(
+        session, case, "handed_off", reason=reason, agent_run_id=run_id, handoff_details=details,
+    )
+
+
+def current_handoff(session: Session, case: InvestigationCase) -> CaseStatusEvent | None:
+    if case.status != "handed_off":
+        return None
+    return session.scalar(select(CaseStatusEvent).where(
+        CaseStatusEvent.investigation_case_id == case.id, CaseStatusEvent.to_status == "handed_off",
+    ).order_by(CaseStatusEvent.occurred_at.desc(), CaseStatusEvent.id.desc()).limit(1))
 
 
 def mark_case_revision_required(session: Session, case_id: uuid.UUID) -> None:

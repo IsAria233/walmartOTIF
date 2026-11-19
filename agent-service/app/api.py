@@ -62,6 +62,7 @@ class InvestigationResponse(BaseModel):
     evaluation_id: UUID | None = None
     outcome_id: UUID | None = None
     handoff_reason: str | None = None
+    handoff_id: UUID | None = None
 
 
 @dataclass(frozen=True)

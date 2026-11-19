@@ -34,6 +34,12 @@ to be retried. The response includes the run ID, the status, and the finding
 and outcome when available. Submit approvals through
 `POST /api/domain/v1/outcomes/{outcome_id}/approvals` before calling resume.
 
+A completed `needs_review` run includes a `handoff_id`. Domain exposes the
+case in `GET /api/domain/v1/investigation-cases?status=handed_off`. Its detail
+includes the reason, Agent run ID, evidence counts, missing sources, and any
+saved Finding ID. Use the same `Idempotency-Key` to retry a start if the
+handoff write is interrupted.
+
 Compose sets `DOMAIN_SERVICE_URL` and `AGENT_CHECKPOINT_DSN`. From the project
 root, run `docker compose exec domain-service alembic upgrade head` after
 starting the services. Populate `distribution_centers.country_code` from the

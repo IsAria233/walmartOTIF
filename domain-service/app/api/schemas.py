@@ -6,7 +6,7 @@ from decimal import Decimal
 from typing import Annotated, Any, Generic, Literal, TypeVar
 from uuid import UUID
 
-from pydantic import AwareDatetime, BeforeValidator, BaseModel, ConfigDict, Field
+from pydantic import AwareDatetime, BeforeValidator, BaseModel, ConfigDict, Field, StringConstraints
 
 
 class ORMModel(BaseModel):
@@ -63,8 +63,11 @@ class CaseStatusRequest(BaseModel):
     reason: str | None = None
 
 
+EvidenceSource = Literal["asn", "appointment_history", "gate_log", "po_versions", "receiving"]
+
+
 class EvidenceSourceRef(BaseModel):
-    source: Literal["asn", "appointment_history", "gate_log", "po_versions", "receiving"]
+    source: EvidenceSource
     record_id: UUID
 
 
@@ -339,6 +342,17 @@ class AttachmentResponse(ORMModel):
     metadata_json: dict[str, Any] | None = None
     created_at: AwareUTCDateTime
 
+class HandoffDetails(BaseModel):
+    evidence_counts: dict[EvidenceSource, Annotated[int, Field(ge=0)]]
+    missing_sources: list[EvidenceSource]
+    finding_id: UUID | None = None
+
+
+class AgentHandoffRequest(BaseModel):
+    reason: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+    details: HandoffDetails
+
+
 class CaseStatusEventResponse(ORMModel):
     id: UUID
     investigation_case_id: UUID
@@ -346,7 +360,14 @@ class CaseStatusEventResponse(ORMModel):
     to_status: str
     reason: str | None = None
     actor_user_id: UUID | None = None
+    agent_run_id: UUID | None = None
+    handoff_details: HandoffDetails | None = None
     occurred_at: AwareUTCDateTime
+
+
+class CaseDetailResponse(CaseResponse):
+    handoff: CaseStatusEventResponse | None = None
+
 
 class EvidenceRecordResponse(ORMModel):
     id: UUID

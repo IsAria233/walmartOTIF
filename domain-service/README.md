@@ -81,6 +81,12 @@ event including the optional reason. A partial unique index permits at most one
 non-closed Case per Fine Record while retaining closed history. Creation and
 reuse lock the Fine Record row; all creation paths call the shared helper.
 
+The Agent saves human review in the case status history with its run ID,
+reason, evidence counts, missing sources, and any saved Finding. This moves
+the case to `handed_off` and reuses the same event for retries of that run.
+Use `GET /api/v1/investigation-cases?status=handed_off` to list these cases
+and `GET /api/v1/investigation-cases/{case_id}` to read the current handoff.
+
 Findings and Evaluations receive monotonically increasing per-Case versions
 while locking the Case. The latest record is the highest version. Evaluations
 retain the exact Finding ID and a complete JSON snapshot. Findings, facts,

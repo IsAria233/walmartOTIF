@@ -49,6 +49,12 @@ class InvestigationPlan(TypedDict):
     sources: list[EvidenceSource]
 
 
+class HandoffDetails(TypedDict):
+    evidence_counts: dict[EvidenceSource, int]
+    missing_sources: list[EvidenceSource]
+    finding_id: str | None
+
+
 PLANS: dict[str, InvestigationPlan] = {
     "on_time": {"causes": ["C1", "C2"], "sources": ["asn", "appointment_history", "gate_log"]},
     "in_full": {"causes": ["C3", "C4", "C5"], "sources": ["asn", "po_versions", "receiving"]},
@@ -81,6 +87,8 @@ class InvestigationState(InvestigationInput, total=False):
     outcome_id: str
     status: RunStatus
     handoff_reason: str
+    missing_sources: list[EvidenceSource]
+    handoff_id: str
     result: dict[str, Any]
 
 
@@ -115,6 +123,8 @@ class InvestigationDomain(EvidenceReader, Protocol):
 
     def read_approval_status(self, case_id: str, outcome_id: str) -> ApprovalStatus: ...
 
+    def record_handoff(self, case_id: str, run_id: str, reason: str, details: HandoffDetails) -> str: ...
+
 
 FindCause = Callable[[CaseIntake, InvestigationPlan, dict[EvidenceSource, list[Evidence]]], Finding]
 
@@ -145,8 +155,9 @@ def build_investigation_graph(
             or case["ships_to_us_dc"] is False
         ):
             return {"status": "out_of_scope"}
-        if any(case[key] is None for key in ("freight_terms", "channel", "ships_to_us_dc")):
-            return needs_review("Required scope data is missing")
+        missing_scope = [key for key in ("freight_terms", "channel", "ships_to_us_dc") if case[key] is None]
+        if missing_scope:
+            return needs_review(f"Required scope data is missing: {', '.join(missing_scope)}")
         if case["metric"] not in PLANS:
             return needs_review("The fine metric is missing or unsupported")
         return {}
@@ -164,7 +175,8 @@ def build_investigation_graph(
             source != "appointment_history" and not evidence[source]
         )]
         if missing:
-            return needs_review(f"Missing evidence: {', '.join(missing)}")
+            return {**needs_review(f"Missing evidence: {', '.join(missing)}"),
+                    "evidence": evidence, "missing_sources": missing}
         return {"evidence": evidence}
 
     def findings(state: InvestigationState) -> dict[str, Any]:
@@ -176,11 +188,10 @@ def build_investigation_graph(
             return needs_review("The finding failed structured validation")
 
         result = {"finding": finding.model_dump(mode="json")}
-        if finding.injection_detected or finding.handoff_required:
-            reason = finding.handoff_reason or (
-                "Untrusted instructions detected in evidence" if finding.injection_detected else "Finding requires human review"
-            )
-            return {**result, **needs_review(reason)}
+        if finding.injection_detected:
+            return {**result, **needs_review("Untrusted instructions detected in evidence")}
+        if finding.handoff_required:
+            return {**result, **needs_review(finding.handoff_reason or "Finding requires human review")}
         if finding.cause_code not in state["plan"]["causes"]:
             return {**result, **needs_review("The cause is missing or does not fit the fine metric")}
 
@@ -214,8 +225,19 @@ def build_investigation_graph(
         return {}
 
     def finalize(state: InvestigationState) -> dict[str, Any]:
-        fields = ("run_id", "case_id", "fine_record_id", "status", "finding_id", "evaluation_id", "outcome_id", "handoff_reason")
-        return {"result": {key: state[key] for key in fields if key in state}}
+        fields = (
+            "run_id", "case_id", "fine_record_id", "status", "finding_id",
+            "evaluation_id", "outcome_id", "handoff_reason",
+        )
+        result = {key: state[key] for key in fields if key in state}
+        if state["status"] != "needs_review":
+            return {"result": result}
+        handoff_id = domain.record_handoff(state["case_id"], state["run_id"], state["handoff_reason"], {
+            "evidence_counts": {source: len(records) for source, records in state.get("evidence", {}).items()},
+            "missing_sources": state.get("missing_sources", []),
+            "finding_id": state.get("finding_id"),
+        })
+        return {"handoff_id": handoff_id, "result": {**result, "handoff_id": handoff_id}}
 
     graph = StateGraph(InvestigationState, input_schema=InvestigationInput)
     graph.add_node("intake", intake)
@@ -250,7 +272,7 @@ def build_investigation_graph(
 
 
 def needs_review(reason: str) -> dict[str, str]:
-    return {"status": "needs_review", "handoff_reason": reason}
+    return {"status": "needs_review", "handoff_reason": reason.strip() or "Finding requires human review"}
 
 
 def is_handoff_or_out_of_scope(state: InvestigationState) -> bool:
