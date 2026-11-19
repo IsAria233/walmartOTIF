@@ -541,10 +541,44 @@ def test_evaluator_rejects_unsupported_or_conflicting_policy_classification():
     policy = PolicyConfiguration(policy_version="0.1", fine_rate=Decimal("0.03"))
     with pytest.raises(PolicyUnavailable, match="outside the supported"):
         evaluate_line(fine, InvestigationFinding(cause_code="C6"), policy)
-    with pytest.raises(PolicyUnavailable, match="conflicts"):
-        evaluate_line(fine, InvestigationFinding(cause_code="C4"), policy)
+    with pytest.raises(PolicyUnavailable, match="human handoff"):
+        evaluate_line(fine, InvestigationFinding(cause_code="C3", handoff_required=True), policy)
     finding = InvestigationFinding(cause_code="C3")
     assert evaluate_line(fine, finding, policy)["corrected_amount"] == "0.60"
+
+
+@pytest.mark.parametrize("cause,party,disposition,corrected,reversal", [
+    ("C1", "supplier", "uphold", "0.60", "0.00"),
+    ("C2", "walmart", "waive", "0.00", "0.60"),
+    ("C3", "supplier", "uphold", "0.60", "0.00"),
+    ("C4", "walmart", "waive", "0.00", "0.60"),
+    ("C5", "walmart", "waive", "0.00", "0.60"),
+])
+def test_evaluator_takes_accountability_from_the_finding_cause(cause, party, disposition, corrected, reversal):
+    from app.db.models import FineRecord, InvestigationFinding, PolicyConfiguration
+    from app.services.policy_evaluator import evaluate_line
+
+    # The OTIF system first charged the supplier; a Walmart cause must reverse that.
+    fine = FineRecord(id=uuid.uuid4(), system_accountability="supplier", non_compliant_cases=2,
+        case_cost_snapshot=Decimal("10.0000"), original_amount=Decimal("0.60"))
+    policy = PolicyConfiguration(policy_version="0.1", fine_rate=Decimal("0.03"))
+    result = evaluate_line(fine, InvestigationFinding(cause_code=cause), policy)
+    assert result["accountable_party"] == party
+    assert result["disposition"] == disposition
+    assert result["corrected_amount"] == corrected
+    assert result["reversal_amount"] == reversal
+
+
+def test_evaluator_still_evaluates_when_injection_was_reported():
+    from app.db.models import FineRecord, InvestigationFinding, PolicyConfiguration
+    from app.services.policy_evaluator import evaluate_line
+
+    fine = FineRecord(id=uuid.uuid4(), system_accountability="supplier", non_compliant_cases=2,
+        case_cost_snapshot=Decimal("10.0000"), original_amount=Decimal("0.60"))
+    policy = PolicyConfiguration(policy_version="0.1", fine_rate=Decimal("0.03"))
+    result = evaluate_line(fine, InvestigationFinding(cause_code="C3", injection_detected=True), policy)
+    assert result["disposition"] == "uphold"
+    assert result["injection_detected"] is True
 
 
 def test_context_row_serializer_accepts_missing_active_case():

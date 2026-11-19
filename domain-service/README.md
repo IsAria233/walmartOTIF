@@ -172,3 +172,20 @@ reviewed. Existing Line Outcomes are migrated into a legacy-snapshot
 Evaluation and one-line aggregate Outcome without recalculating their amounts.
 Downgrade guards refuse to discard new Evaluation, scan, status-event, policy,
 or Case association history. This revision adds seven Domain tables, for 32 total.
+
+## Review fixes (migration 0005)
+
+- Accountability and the corrected fine come from the finding's cause (C1-C5), so Walmart causes waive the fine.
+- A finding that reports injected instructions is still evaluated (policy v0.2); `handoff_required` still blocks evaluation.
+- Attachments carry `content_text`; dispute creation accepts `reason_category`, `reason_text`, `amount_disputed`, `external_dispute_id`, `submitted_at`.
+- A finding fact can cite source records directly: `source_records: [{"record_type": "receiving_record", "record_id": "<uuid>"}]`. Each one must exist.
+- Findings accept `confidence_level` (`high | medium | low`) and `ruled_out_causes` (`[{"cause": "C1", "reason": "..."}]`).
+- `GET /api/v1/po-lines/{id}/asns` returns each ASN with its `lines` (`shipped_cases`).
+- `POST /api/v1/outcomes/{id}/approvals` needs `Authorization: Bearer <token>` from the Auth Service (shared `JWT_SECRET`). Associate stage: `dispute_associate` or `compliance_manager`. Manager stage: `compliance_manager` only.
+- The container runs `alembic upgrade head` before starting.
+
+Load the seed cases (answers are not loaded):
+
+```bash
+python -m scripts.load_seed_cases ../data-gen/seed_cases/seed_cases.json
+```

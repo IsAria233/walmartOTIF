@@ -89,6 +89,8 @@ class Attachment(Base):
     attachment_type: Mapped[str | None] = mapped_column(String(100))
     filename: Mapped[str | None] = mapped_column(String(500))
     uri: Mapped[str | None] = mapped_column(Text)
+    # Attachments are text documents (BOL, POD, appointment email, PO copy).
+    content_text: Mapped[str | None] = mapped_column(Text)
     metadata_json: Mapped[dict | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = created_at()
     dispute: Mapped[Dispute] = relationship(back_populates="attachments", passive_deletes="all", overlaps="attachments")

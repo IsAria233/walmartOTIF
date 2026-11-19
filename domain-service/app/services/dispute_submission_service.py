@@ -13,7 +13,18 @@ from app.services.dispute_service import add_dispute_line
 from app.services.exceptions import InvalidRequest, NotFound
 
 
-def submit_dispute(session: Session, *, supplier_id: uuid.UUID, lines: list[dict], attachments: list[dict] | None = None) -> Dispute:
+def submit_dispute(
+    session: Session,
+    *,
+    supplier_id: uuid.UUID,
+    lines: list[dict],
+    attachments: list[dict] | None = None,
+    external_dispute_id: str | None = None,
+    reason_category: str | None = None,
+    reason_text: str | None = None,
+    amount_disputed=None,
+    submitted_at: datetime | None = None,
+) -> Dispute:
     if not 1 <= len(lines) <= 3:
         raise InvalidRequest("A Dispute must contain between one and three Fine Records")
     fine_ids = [line["fine_record_id"] for line in lines]
@@ -26,7 +37,16 @@ def submit_dispute(session: Session, *, supplier_id: uuid.UUID, lines: list[dict
     ).scalars().all()
     if set(locked_ids) != set(fine_ids):
         raise NotFound("Fine Record not found")
-    dispute = Dispute(supplier_id=supplier_id, submitted_at=datetime.now(timezone.utc), status="submitted")
+    # reason_text is supplier-written and untrusted: it is stored as data only.
+    dispute = Dispute(
+        supplier_id=supplier_id,
+        submitted_at=submitted_at or datetime.now(timezone.utc),
+        status="submitted",
+        external_dispute_id=external_dispute_id,
+        reason_category=reason_category,
+        reason_text=reason_text,
+        amount_disputed=amount_disputed,
+    )
     session.add(dispute)
     session.flush()
     seen = set()
@@ -74,6 +94,7 @@ def submit_dispute(session: Session, *, supplier_id: uuid.UUID, lines: list[dict
             attachment_type=item.get("attachment_type"),
             filename=item.get("filename"),
             uri=item.get("uri"),
+            content_text=item.get("content_text"),
             metadata_json=item.get("metadata_json"),
         ))
     session.flush()

@@ -26,7 +26,7 @@ def pg_engine():
     with engine.connect() as connection:
         identity = connection.execute(text("SELECT current_database(), current_user")).one()
         assert identity == (DATABASE_NAME, "stephenhuang")
-        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0004_scrum15_domain_workflows"
+        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0005_review_fixes"
     yield engine
     engine.dispose()
 

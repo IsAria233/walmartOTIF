@@ -63,17 +63,36 @@ class CaseStatusRequest(BaseModel):
     reason: str | None = None
 
 
+SourceRecordType = Literal[
+    "fine_record", "po_line", "po_line_version", "asn", "asn_line", "appointment_event",
+    "delivery", "gate_log", "receiving_record", "weather_alert", "dispute", "attachment",
+]
+
+
+class SourceRecordRef(BaseModel):
+    record_type: SourceRecordType
+    record_id: UUID
+
+
+class RuledOutCause(BaseModel):
+    cause: Literal["C1", "C2", "C3", "C4", "C5"]
+    reason: str = Field(min_length=1)
+
+
 class FindingFactRequest(BaseModel):
     fact_key: str = Field(min_length=1, max_length=150)
     fact_value: str | None = None
     source_description: str | None = None
     evidence_ids: list[UUID] = Field(default_factory=list)
+    source_records: list[SourceRecordRef] = Field(default_factory=list)
 
 
 class FindingCreateRequest(BaseModel):
     cause_code: str | None = None
     summary: str | None = None
     confidence: Decimal | None = Field(default=None, ge=0, le=1)
+    confidence_level: Literal["high", "medium", "low"] | None = None
+    ruled_out_causes: list[RuledOutCause] = Field(default_factory=list)
     agent_run_id: UUID | None = None
     handoff_required: bool = False
     handoff_reason: str | None = None
@@ -87,6 +106,7 @@ class FindingFactResponse(BaseModel):
     fact_value: str | None
     source_description: str | None
     evidence_ids: list[UUID] = Field(default_factory=list)
+    source_records: list[SourceRecordRef] | None = None
 
 
 class FindingResponse(BaseModel):
@@ -97,6 +117,8 @@ class FindingResponse(BaseModel):
     cause_code: str | None
     summary: str | None
     confidence: Decimal | None
+    confidence_level: str | None = None
+    ruled_out_causes: list[RuledOutCause] | None = None
     handoff_required: bool
     handoff_reason: str | None
     injection_detected: bool
@@ -145,11 +167,17 @@ class AttachmentInput(BaseModel):
     attachment_type: str | None = None
     filename: str | None = None
     uri: str | None = None
+    content_text: str | None = None
     metadata_json: dict[str, Any] | None = None
 
 
 class DisputeCreateRequest(BaseModel):
     supplier_id: UUID
+    external_dispute_id: str | None = Field(default=None, max_length=150)
+    reason_category: str | None = Field(default=None, max_length=150)
+    reason_text: str | None = None
+    amount_disputed: Decimal | None = Field(default=None, ge=0)
+    submitted_at: AwareDatetime | None = None
     lines: list[DisputeLineInput] = Field(min_length=1, max_length=3)
     attachments: list[AttachmentInput] = Field(default_factory=list)
 
@@ -236,6 +264,10 @@ class ASNLineResponse(ORMModel):
     asn_id: UUID
     po_line_id: UUID
     shipped_cases: int
+
+
+class ASNWithLinesResponse(ASNResponse):
+    lines: list[ASNLineResponse] = Field(default_factory=list)
 
 class DeliveryResponse(ORMModel):
     id: UUID
@@ -327,6 +359,7 @@ class AttachmentResponse(ORMModel):
     attachment_type: str | None = None
     filename: str | None = None
     uri: str | None = None
+    content_text: str | None = None
     metadata_json: dict[str, Any] | None = None
     created_at: AwareUTCDateTime
 
@@ -449,7 +482,7 @@ class POLineVersionPageResponse(PageResponse[POLineVersionResponse]):
     pass
 
 
-class ASNPageResponse(PageResponse[ASNResponse]):
+class ASNPageResponse(PageResponse[ASNWithLinesResponse]):
     pass
 
 

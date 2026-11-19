@@ -59,7 +59,6 @@ class InvestigationCase(Base):
     outcomes: Mapped[list[CaseOutcome]] = relationship(back_populates="investigation_case", passive_deletes="all")
     status_events: Mapped[list[CaseStatusEvent]] = relationship(back_populates="investigation_case", order_by="CaseStatusEvent.occurred_at", passive_deletes="all")
     scan_results: Mapped[list[PreInvoiceScanResult]] = relationship(back_populates="investigation_case", passive_deletes="all")
-    scan_results: Mapped[list[PreInvoiceScanResult]] = relationship(back_populates="investigation_case", passive_deletes="all")
 
 
 class CaseStatusEvent(Base):
@@ -140,6 +139,8 @@ class InvestigationFinding(Base):
     cause_code: Mapped[str | None] = mapped_column(String(50))
     summary: Mapped[str | None] = mapped_column(Text)
     confidence: Mapped[Decimal | None] = mapped_column(Numeric(5, 4))
+    confidence_level: Mapped[str | None] = mapped_column(String(10))  # high | medium | low
+    ruled_out_causes: Mapped[list | None] = mapped_column(JSONB)  # [{"cause": "C1", "reason": "..."}]
     agent_run_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True))  # external Agent Service reference
     handoff_required: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
     handoff_reason: Mapped[str | None] = mapped_column(Text)
@@ -201,6 +202,7 @@ class FindingFact(Base):
     fact_key: Mapped[str] = mapped_column(String(150), nullable=False)
     fact_value: Mapped[str | None] = mapped_column(Text)
     source_description: Mapped[str | None] = mapped_column(Text)
+    source_records: Mapped[list | None] = mapped_column(JSONB)  # [{"record_type": "...", "record_id": "<uuid>"}]
     finding: Mapped[InvestigationFinding] = relationship(back_populates="facts", passive_deletes="all")
     evidence_links: Mapped[list[EvidenceLink]] = relationship(back_populates="finding_fact", passive_deletes="all")
 

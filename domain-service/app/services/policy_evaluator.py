@@ -10,14 +10,14 @@ from app.services.exceptions import PolicyUnavailable
 def evaluate_line(fine: FineRecord, finding: InvestigationFinding, policy: PolicyConfiguration) -> dict:
     """Calculate the documented 3% line amount from Domain-owned fine inputs.
 
-    Cause classification is not inferred from agent text. The persisted Domain
-    FineRecord accountability value must already be a supported decision.
+    Accountability comes from the finding's cause (policy section 3), not from
+    the accountability the OTIF system first recorded on the Fine Record. A
+    cause whose party differs from the Fine Record is the normal reversal case.
+    Injected instructions in supplier text are reported on the finding and do
+    not block evaluation (policy v0.2, section 4.6).
     """
-    if finding.handoff_required or finding.injection_detected:
+    if finding.handoff_required:
         raise PolicyUnavailable("Finding requires human handoff and cannot be financially evaluated")
-    party = (fine.system_accountability or "").strip().lower()
-    if party not in {"supplier", "walmart"}:
-        raise PolicyUnavailable("Fine Record lacks supported accountable-party data")
     # The policy document defines exactly five supported cause classifications
     # and their accountability. A missing/unsupported classification cannot
     # produce a financial result; the policy requires it to be handed off.
@@ -25,8 +25,7 @@ def evaluate_line(fine: FineRecord, finding: InvestigationFinding, policy: Polic
     cause_parties = {"C1": "supplier", "C2": "walmart", "C3": "supplier", "C4": "walmart", "C5": "walmart"}
     if cause not in cause_parties:
         raise PolicyUnavailable("Finding cause is missing or outside the supported C1-C5 policy")
-    if cause_parties[cause] != party:
-        raise PolicyUnavailable("Finding cause accountability conflicts with the Fine Record")
+    party = cause_parties[cause]
     if fine.non_compliant_cases is None or fine.case_cost_snapshot is None or fine.original_amount is None:
         raise PolicyUnavailable("Fine Record lacks inputs required by policy v0.1")
     base = Decimal(fine.non_compliant_cases) * Decimal(fine.case_cost_snapshot) * Decimal(policy.fine_rate)
@@ -46,4 +45,7 @@ def evaluate_line(fine: FineRecord, finding: InvestigationFinding, policy: Polic
         "policy_version": policy.policy_version,
         "finding_id": str(finding.id),
         "handoff_required": False,
+        "cause_code": cause,
+        "system_accountable_party": (fine.system_accountability or "").strip().lower() or None,
+        "injection_detected": bool(finding.injection_detected),
     }

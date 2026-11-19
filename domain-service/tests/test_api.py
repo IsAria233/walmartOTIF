@@ -185,6 +185,7 @@ def test_case_and_dispute_api_contracts_and_pagination(monkeypatch):
             outcome_id = outcome.json()["id"]
             assert client.get(f"/api/v1/investigation-cases/{case_id}/outcome").status_code == 200
             monkeypatch.setattr("app.api.routers.authenticated_user", lambda request: uuid.uuid4())
+            monkeypatch.setattr("app.api.routers.authenticated_role", lambda request: "compliance_manager")
             line_outcome_id = outcome.json()["line_outcomes"][0]["id"]
             approval = client.post(f"/api/v1/outcomes/{outcome_id}/approvals", json={
                 "line_outcome_id": line_outcome_id, "stage": "associate", "decision": "approved"

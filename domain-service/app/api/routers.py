@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import math
+import os
 import uuid
 from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
+import jwt
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from pydantic import AwareDatetime
 from sqlalchemy import func, select
@@ -239,20 +241,51 @@ def get_outcomes(case_id: uuid.UUID, page: int = Query(1, ge=1), page_size: int 
     return page_data
 
 
-def authenticated_user(request: Request) -> uuid.UUID:
-    # Gateway integration supplies this trusted request-state attribute later.
-    value = getattr(request.state, "authenticated_user_id", None)
-    if not value:
-        raise HTTPException(status_code=503, detail={"error": {"code": "identity_unavailable", "message": "Trusted caller identity is not configured"}})
+ROLES = {"dispute_associate", "compliance_manager", "admin"}
+# Who may record a decision at each approval stage (policy section 8).
+STAGE_ROLES = {
+    "associate": {"dispute_associate", "compliance_manager"},
+    "manager": {"compliance_manager"},
+}
+
+
+def _token_claims(request: Request) -> dict:
+    """Verify the Auth Service JWT. Both services share JWT_SECRET (HS256)."""
+    unauthorized = HTTPException(status_code=401, headers={"WWW-Authenticate": "Bearer"},
+        detail={"error": {"code": "unauthenticated", "message": "A valid bearer token is required"}})
+    secret = os.getenv("JWT_SECRET", "")
+    if len(secret.encode("utf-8")) < 32:
+        raise HTTPException(status_code=503, detail={"error": {"code": "identity_unavailable", "message": "JWT_SECRET is not configured"}})
+    scheme, _, token = request.headers.get("Authorization", "").partition(" ")
+    if scheme.lower() != "bearer" or not token:
+        raise unauthorized
     try:
-        return uuid.UUID(str(value))
+        return jwt.decode(token.strip(), secret, algorithms=["HS256"], options={"require": ["sub", "role", "exp"]})
+    except jwt.InvalidTokenError as exc:
+        raise unauthorized from exc
+
+
+def authenticated_user(request: Request) -> uuid.UUID:
+    try:
+        return uuid.UUID(str(_token_claims(request)["sub"]))
     except ValueError as exc:
-        raise HTTPException(status_code=503, detail={"error": {"code": "identity_invalid", "message": "Trusted caller identity is invalid"}}) from exc
+        raise HTTPException(status_code=401, detail={"error": {"code": "unauthenticated", "message": "Token subject is not a user id"}}) from exc
+
+
+def authenticated_role(request: Request) -> str:
+    role = _token_claims(request)["role"]
+    if role not in ROLES:
+        raise HTTPException(status_code=403, detail={"error": {"code": "forbidden", "message": "Unknown role"}})
+    return role
 
 
 @router.post("/outcomes/{outcome_id}/approvals", response_model=ApprovalDecisionResponse, status_code=201)
 def post_approval(outcome_id: uuid.UUID, payload: ApprovalDecisionRequest, request: Request, db: Session = Depends(get_db)):
     user_id = authenticated_user(request)
+    role = authenticated_role(request)
+    if role not in STAGE_ROLES[payload.stage]:
+        raise HTTPException(status_code=403, detail={"error": {"code": "forbidden",
+            "message": f"Role {role} cannot record a {payload.stage} approval"}})
     with db.begin():
         decision = decide_line(db, outcome_id=outcome_id,
             line_outcome_id=payload.line_outcome_id, stage=payload.stage,
@@ -338,9 +371,14 @@ def asn(ident: uuid.UUID, db: Session = Depends(get_db)): return read_one(db, AS
 def po_line_asns(ident: uuid.UUID, page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100), db: Session = Depends(get_db)):
     if db.get(POLine, ident) is None: raise NotFound("PO Line not found")
     condition = ASNLine.po_line_id == ident
-    return paginated_query(db, select(ASN).join(ASNLine).where(condition),
+    page_data = paginated_query(db, select(ASN).join(ASNLine).where(condition),
         select(func.count(func.distinct(ASN.id))).join(ASNLine).where(condition),
         page=page, page_size=page_size, order_by=(ASN.ship_ts.desc(), ASN.id))
+    # shipped_cases lives on the ASN line, so return this PO line's lines with each ASN.
+    for item in page_data["items"]:
+        lines = db.execute(select(ASNLine).where(ASNLine.asn_id == uuid.UUID(item["id"]), ASNLine.po_line_id == ident)).scalars().all()
+        item["lines"] = [serialize(line) for line in lines]
+    return page_data
 @router.get("/po-lines/{ident}/appointments", response_model=AppointmentPageResponse)
 def po_line_appointments(ident: uuid.UUID, page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100), db: Session = Depends(get_db)):
     if db.get(POLine, ident) is None: raise NotFound("PO Line not found")
