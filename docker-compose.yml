@@ -7,6 +7,11 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
 
   auth-service:
     build: ./auth-service
@@ -20,7 +25,10 @@ services:
     env_file: .env
     environment:
       DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
-    depends_on: [db]
+    # domain-service runs migrations on start, so the database must be accepting connections first.
+    depends_on:
+      db:
+        condition: service_healthy
 
   agent-service:
     build: ./agent-service
