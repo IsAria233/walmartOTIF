@@ -14,8 +14,32 @@ The reader fetches `/api/v1/investigation-contexts/{fine_record_id}` with the
 current `case_id`. One request provides ASN lines, appointments, gate logs,
 PO line versions, and receiving records. The reader returns the sources in the
 graph's plan and preserves delivery IDs for gate and receiving evidence.
-The record IDs are the UUIDs of the source records. The Domain write adapter
-must resolve these to EvidenceRecord UUIDs before submitting a Finding.
+The record IDs are the UUIDs of the source records. The Domain client sends
+the source and record ID with the Finding. Domain verifies each reference
+against the case's PO line and creates the corresponding EvidenceRecord.
+
+## Investigation API
+
+Send the bearer token from Auth with each request.
+
+| Method | Gateway path | Request |
+| --- | --- | --- |
+| POST | `/api/agent/investigations` | JSON with the Domain `case_id` |
+| GET | `/api/agent/investigations/{run_id}` | No body |
+| POST | `/api/agent/investigations/{run_id}/resume` | No body or an empty JSON object |
+
+Start runs synchronously until the first pause or terminal state. Send a UUID
+in the `Idempotency-Key` header and reuse it if the same start request needs
+to be retried. The response includes the run ID, the status, and the finding
+and outcome when available. Submit approvals through
+`POST /api/domain/v1/outcomes/{outcome_id}/approvals` before calling resume.
+
+Compose sets `DOMAIN_SERVICE_URL` and `AGENT_CHECKPOINT_DSN`. From the project
+root, run `docker compose exec domain-service alembic upgrade head` after
+starting the services. Populate `distribution_centers.country_code` from the
+DC data. Missing country data sends the run to `needs_review`.
+Without a model key, starts return `503 model_not_configured`. Existing paused
+runs can still be queried and resumed.
 
 ## Model findings
 
@@ -25,8 +49,8 @@ The default `LLM_MODEL` is `gpt-4.1-mini`. The Compose setup passes the project'
 `.env` variables to the Agent service.
 
 `DomainEvidenceReader.read_intake()` projects the MABD, transit days, and fine
-snapshot used by the analyzer. The intake caller supplies the verified U.S. DC
-scope flag. The model receives only planned sources and selected fields.
+snapshot used by the analyzer. The intake derives the U.S. DC scope flag
+from the destination country. The model receives planned sources and selected fields.
 LangGraph checks the cause and citations before submitting a Finding.
 
 ## Run the tests

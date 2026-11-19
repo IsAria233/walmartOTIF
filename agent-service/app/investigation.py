@@ -105,7 +105,9 @@ class EvidenceReader(Protocol):
 class InvestigationDomain(EvidenceReader, Protocol):
     def read_intake(self, case_id: str, fine_record_id: str) -> CaseIntake: ...
 
-    def submit_finding(self, case_id: str, run_id: str, finding: dict[str, Any]) -> str: ...
+    def submit_finding(
+        self, case_id: str, run_id: str, finding: dict[str, Any], evidence: dict[EvidenceSource, list[Evidence]],
+    ) -> str: ...
 
     def evaluate(self, case_id: str, finding_id: str) -> str: ...
 
@@ -191,7 +193,7 @@ def build_investigation_graph(
         return result
 
     def submit_finding(state: InvestigationState) -> dict[str, Any]:
-        finding_id = domain.submit_finding(state["case_id"], state["run_id"], state["finding"])
+        finding_id = domain.submit_finding(state["case_id"], state["run_id"], state["finding"], state["evidence"])
         return {"finding_id": finding_id}
 
     def rules_call(state: InvestigationState) -> dict[str, Any]:

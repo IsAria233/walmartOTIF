@@ -92,13 +92,18 @@ class DomainEvidenceReader:
         self.client = client
 
     def read_intake(
-        self, case_id: str, fine_record_id: str, *, ships_to_us_dc: bool | None,
+        self, case_id: str, fine_record_id: str, *, ships_to_us_dc: bool | None = None,
     ) -> CaseIntake:
         context = self._read_context(case_id, fine_record_id)
         try:
             po = context["purchase_order"]
             line = context["po_line"]
             fine = context["fine_record"]
+            if ships_to_us_dc is None:
+                dc = context.get("distribution_center") or {}
+                country = dc.get("country_code")
+                if isinstance(country, str) and len(country) == 2 and country.isascii() and country.isalpha():
+                    ships_to_us_dc = country.upper() == "US"
             return {
                 "po_line_id": line["id"],
                 "freight_terms": po["freight_terms"],

@@ -24,7 +24,7 @@ class TrialDomain:
     def read_evidence(self, case_id, fine_record_id, sources):
         return self.reader.read_evidence(case_id, fine_record_id, sources)
 
-    def submit_finding(self, case_id, run_id, finding):
+    def submit_finding(self, case_id, run_id, finding, evidence):
         self.writes.append("finding")
         return "trial-finding"
 

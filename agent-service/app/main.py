@@ -1,10 +1,40 @@
-"""Agent service: LangGraph investigator, tools, guardrails, LangFuse tracing.
+"""FastAPI service for the LangGraph OTIF investigator."""
 
-The investigation graph and persistent checkpoint setup live in app.investigation.
-"""
-from fastapi import FastAPI
+import os
+from contextlib import ExitStack, asynccontextmanager
 
-app = FastAPI(title="agent-service")
+import httpx
+import psycopg
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+
+from .api import router
+from .domain_investigation import DomainInvestigationClient, DomainRequestError
+from .model_finding import open_finding_analyzer
+from .runtime import open_runtime
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    checkpoint_dsn = os.getenv("AGENT_CHECKPOINT_DSN")
+    domain_url = os.getenv("DOMAIN_SERVICE_URL")
+    with ExitStack() as stack:
+        if checkpoint_dsn and domain_url:
+            client = stack.enter_context(httpx.Client(base_url=domain_url, timeout=10))
+            analyzer = None
+            if os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY"):
+                analyzer = stack.enter_context(open_finding_analyzer())
+            app.state.investigations = stack.enter_context(
+                open_runtime(checkpoint_dsn, DomainInvestigationClient(client), analyzer),
+            )
+        try:
+            yield
+        finally:
+            app.state.investigations = None
+
+
+app = FastAPI(title="agent-service", lifespan=lifespan)
+app.include_router(router)
 
 
 @app.get("/health")
@@ -12,6 +42,11 @@ def health():
     return {"service": "agent-service", "status": "ok"}
 
 
-# TODO: POST /investigations -> start a run for a dispute or flagged PO line
-# TODO: GET /investigations/{id} -> status, findings, evidence
-# TODO: POST /investigations/{id}/resume -> continue after human approval
+@app.exception_handler(DomainRequestError)
+def domain_error(_request: Request, exc: DomainRequestError) -> JSONResponse:
+    return JSONResponse(status_code=exc.status, content={"detail": str(exc)})
+
+
+@app.exception_handler(psycopg.OperationalError)
+def checkpoint_error(_request: Request, _exc: psycopg.OperationalError) -> JSONResponse:
+    return JSONResponse(status_code=503, content={"detail": {"code": "checkpoint_unavailable"}})

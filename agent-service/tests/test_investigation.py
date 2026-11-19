@@ -52,7 +52,7 @@ class SeedDomain:
             for source in sources
         }
 
-    def submit_finding(self, case_id, run_id, finding):
+    def submit_finding(self, case_id, run_id, finding, evidence):
         assert finding["cause_code"] == "C2"
         self.writes.append("finding")
         return "finding-02"
