@@ -38,8 +38,8 @@ class SeedDomain:
             "ships_to_us_dc": True, "metric": fine["metric"],
         }
 
-    def read_evidence(self, fine_record_id, sources):
-        assert fine_record_id == self.fixture["fine_record"]["fine_id"]
+    def read_evidence(self, case_id, fine_record_id, sources):
+        assert (case_id, fine_record_id) == (self.fixture["case_id"], self.fixture["fine_record"]["fine_id"])
         self.evidence_reads += 1
         rows = {
             "asn": [self.fixture["asn"]] if self.fixture.get("asn") else [],

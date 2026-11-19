@@ -83,12 +83,18 @@ class PolicyReviewRequired(Exception):
     """The Domain policy cannot evaluate this finding automatically."""
 
 
-class InvestigationDomain(Protocol):
-    def read_intake(self, case_id: str, fine_record_id: str) -> CaseIntake: ...
+class EvidenceReadError(RuntimeError):
+    """Domain evidence could not be fetched or verified."""
 
+
+class EvidenceReader(Protocol):
     def read_evidence(
-        self, fine_record_id: str, sources: list[EvidenceSource]
+        self, case_id: str, fine_record_id: str, sources: list[EvidenceSource]
     ) -> dict[EvidenceSource, list[Evidence]]: ...
+
+
+class InvestigationDomain(EvidenceReader, Protocol):
+    def read_intake(self, case_id: str, fine_record_id: str) -> CaseIntake: ...
 
     def submit_finding(self, case_id: str, run_id: str, finding: dict[str, Any]) -> str: ...
 
@@ -103,8 +109,14 @@ FindCause = Callable[[CaseIntake, InvestigationPlan, dict[EvidenceSource, list[E
 
 
 def build_investigation_graph(
-    *, domain: InvestigationDomain, find_cause: FindCause, checkpointer: BaseCheckpointSaver
+    *,
+    domain: InvestigationDomain,
+    find_cause: FindCause,
+    checkpointer: BaseCheckpointSaver,
+    evidence_reader: EvidenceReader | None = None,
 ) -> CompiledStateGraph:
+    reader = evidence_reader if evidence_reader is not None else domain
+
     def intake(state: InvestigationInput, config: RunnableConfig) -> dict[str, Any]:
         if config.get("configurable", {}).get("thread_id") != state["run_id"]:
             raise ValueError("thread_id must match run_id")
@@ -130,7 +142,10 @@ def build_investigation_graph(
 
     def investigate(state: InvestigationState) -> dict[str, Any]:
         sources = state["plan"]["sources"]
-        evidence = domain.read_evidence(state["fine_record_id"], sources)
+        try:
+            evidence = reader.read_evidence(state["case_id"], state["fine_record_id"], sources)
+        except EvidenceReadError as exc:
+            return needs_review(str(exc))
         missing = [source for source in sources if source not in evidence or (
             source != "appointment_history" and not evidence[source]
         )]
@@ -228,8 +243,14 @@ def is_handoff_or_out_of_scope(state: InvestigationState) -> bool:
 
 @contextmanager
 def open_investigation_graph(
-    checkpoint_dsn: str, *, domain: InvestigationDomain, find_cause: FindCause
+    checkpoint_dsn: str,
+    *,
+    domain: InvestigationDomain,
+    find_cause: FindCause,
+    evidence_reader: EvidenceReader | None = None,
 ) -> Iterator[CompiledStateGraph]:
     with PostgresSaver.from_conn_string(checkpoint_dsn) as checkpointer:
         checkpointer.setup()
-        yield build_investigation_graph(domain=domain, find_cause=find_cause, checkpointer=checkpointer)
+        yield build_investigation_graph(
+            domain=domain, find_cause=find_cause, checkpointer=checkpointer, evidence_reader=evidence_reader,
+        )

@@ -6,8 +6,16 @@ Finding, invokes Domain policy evaluation, and pauses for approval. A resume
 signal prompts a fresh read of the same Outcome's approval status in Domain.
 
 The graph factory takes an `InvestigationDomain` adapter and a `find_cause`
-callback. SCRUM-27 tests use `SEED-02` with simulated Domain responses. SCRUM-28
-will connect evidence reads to the Domain API.
+callback. Pass `DomainEvidenceReader` as `evidence_reader` to use real Domain
+reads in the investigation node. Give the reader an `httpx.Client` configured
+with the internal `DOMAIN_SERVICE_URL` as its base URL and a request timeout.
+
+The reader fetches `/api/v1/investigation-contexts/{fine_record_id}` with the
+current `case_id`. One request provides ASN lines, appointments, gate logs,
+PO line versions, and receiving records. The reader returns the sources in the
+graph's plan and preserves delivery IDs for gate and receiving evidence.
+The record IDs are the UUIDs of the source records. The Domain write adapter
+must resolve these to EvidenceRecord UUIDs before submitting a Finding.
 
 ## Run the tests
 
