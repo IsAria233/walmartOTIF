@@ -3,4 +3,4 @@ uvicorn[standard]
 sqlalchemy
 psycopg2-binary
 pyjwt
-passlib[bcrypt]
+argon2-cffi>=23.1
