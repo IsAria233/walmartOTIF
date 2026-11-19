@@ -1,8 +1,6 @@
 """Agent service: LangGraph investigator, tools, guardrails, LangFuse tracing.
 
-Graph (first draft): intake -> scope check (code) -> plan causes ->
-investigate loop (read-only tools) -> structured findings ->
-rules call (domain-service) -> route -> approval pause -> finalize.
+The investigation graph and persistent checkpoint setup live in app.investigation.
 """
 from fastapi import FastAPI
 

@@ -3,5 +3,7 @@ uvicorn[standard]
 httpx
 pyjwt
 langgraph
+langgraph-checkpoint-postgres
+psycopg[binary,pool]
 langchain
 langfuse
