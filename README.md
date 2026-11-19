@@ -24,7 +24,18 @@ Team: Kunze Wei, Ivo Zeng, Xiwen Huang
     cp .env.example .env      # fill in secrets
     docker compose up --build
 
-Check: http://localhost:8080/health, then `/api/auth/health`, `/api/domain/health`, `/api/agent/health`.
+The gateway listens on `http://localhost:8080`. Check `/health`,
+`/api/auth/health`, `/api/domain/health`, and `/api/agent/health`.
+
+| Public gateway route | Target service route |
+| --- | --- |
+| `POST /api/auth/login` | Auth `POST /login` |
+| `GET /api/auth/me` | Auth `GET /me` |
+| `/api/domain/v1/...` | Domain `/api/v1/...` |
+| `/api/agent/...` | Agent `/...` |
+
+Send `Authorization: Bearer <token>` on authenticated requests. The gateway
+forwards the header. View gateway logs with `docker compose logs gateway`.
 
 ## Working agreement
 
