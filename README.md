@@ -37,6 +37,21 @@ The gateway listens on `http://localhost:8080`. Check `/health`,
 Send `Authorization: Bearer <token>` on authenticated requests. The gateway
 forwards the header. View gateway logs with `docker compose logs gateway`.
 
+## End-to-end slice
+
+One fine from login to approval through every service: auth login, the domain
+work queue, the agent's investigation, the rules engine result, then approval.
+
+    # .env needs JWT_SECRET, AUTH_DEMO_PASSWORD_HASH (hash of the demo password) and ANTHROPIC_API_KEY
+    docker compose up -d --build
+    docker compose run --rm -T -v "$PWD/data-gen:/data:ro" domain-service \
+      python -m scripts.load_seed_cases /data/seed_cases/seed_cases.json
+    uv run --with httpx python scripts/e2e_slice.py --fine FINE-1001 --gateway http://localhost:8080
+
+A case can be investigated once. To start again, `docker compose down -v` and
+repeat the steps above. Outside Docker, `scripts/reset_local_db.sh` wipes and
+reloads the database named by `DATABASE_URL`.
+
 ## Working agreement
 
 - `main` is protected; work on `feature/<JIRA-KEY>-short-name` branches and merge by pull request.

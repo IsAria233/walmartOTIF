@@ -1,7 +1,7 @@
 fastapi
 uvicorn[standard]
 httpx
-pyjwt
+pydantic
 langgraph
-langchain
+anthropic
 langfuse
