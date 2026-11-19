@@ -54,4 +54,3 @@ def get_investigation(run_id: str):
     return RUNS[run_id]
 
 # TODO (SCRUM-20): require the Auth Service JWT on these endpoints.
-# TODO: LangFuse tracing, one trace per investigation.

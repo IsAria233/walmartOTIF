@@ -17,6 +17,7 @@ from typing import Any, Callable, TypedDict
 from langgraph.graph import END, START, StateGraph
 
 from app.domain_client import DomainClient, DomainError
+from app.tracing import investigation_trace, observation, plain
 from app.tools import CAUSES_BY_METRIC, SUBMIT_TOOL, record_keys, run_tool, tool_definitions
 
 MODEL = os.getenv("AGENT_MODEL", "claude-haiku-5-5")
@@ -145,7 +146,10 @@ def build_graph(domain: DomainClient, llm: LLM):
         return {"messages": [{"role": "user", "content": opening}]}
 
     def model(state: State) -> dict:
-        response = llm(SYSTEM_PROMPT, tool_definitions(state["metric"]), state["messages"])
+        # The Anthropic SDK reports the model call itself (model, tokens, cost) as a child generation.
+        with observation(f"model-step-{state['steps'] + 1}", input=plain(state["messages"])) as span:
+            response = llm(SYSTEM_PROMPT, tool_definitions(state["metric"]), state["messages"])
+            span.update(output=plain(response.content))
         update: dict = {"steps": state["steps"] + 1,
                         "messages": state["messages"] + [{"role": "assistant", "content": response.content}]}
         if response.stop_reason != "tool_use":
@@ -159,7 +163,9 @@ def build_graph(domain: DomainClient, llm: LLM):
         # Read tools run first, so findings submitted in the same turn can cite them.
         for block in sorted(calls, key=lambda b: b.name == SUBMIT_TOOL):
             if block.name == SUBMIT_TOOL:
-                problems = validate_findings(block.input, state["metric"], fetched)
+                with observation(SUBMIT_TOOL, as_type="guardrail", input=plain(block.input)) as check:
+                    problems = validate_findings(block.input, state["metric"], fetched)
+                    check.update(output={"accepted": not problems, "problems": problems})
                 log.append({"tool": SUBMIT_TOOL, "accepted": not problems, "problems": problems})
                 if problems:
                     rejections += 1
@@ -170,7 +176,9 @@ def build_graph(domain: DomainClient, llm: LLM):
                     results.append({"type": "tool_result", "tool_use_id": block.id, "content": "Findings accepted."})
                 continue
             try:
-                payload = run_tool(block.name, state["metric"], state["context"])
+                with observation(block.name, as_type="tool") as span:
+                    payload = run_tool(block.name, state["metric"], state["context"])
+                    span.update(output=payload)
             except KeyError as exc:
                 log.append({"tool": block.name, "error": str(exc)})
                 results.append({"type": "tool_result", "tool_use_id": block.id, "is_error": True, "content": str(exc)})
@@ -233,11 +241,21 @@ def build_graph(domain: DomainClient, llm: LLM):
 
 def investigate(case_id: str, domain: DomainClient, llm: LLM) -> dict:
     run_id = str(uuid.uuid4())
-    final = build_graph(domain, llm).invoke(
-        {"case_id": case_id, "run_id": run_id}, {"recursion_limit": 4 * MAX_MODEL_STEPS + 10},
-    )
+    with investigation_trace(case_id, run_id) as (root, trace_id):
+        final = build_graph(domain, llm).invoke(
+            {"case_id": case_id, "run_id": run_id}, {"recursion_limit": 4 * MAX_MODEL_STEPS + 10},
+        )
+        fine = (final.get("context") or {}).get("fine_record", {})
+        findings = final.get("findings") or {}
+        root.update(
+            output={"status": final["status"], "cause": findings.get("cause"),
+                    "confidence": findings.get("confidence"), "handoff_reason": final.get("handoff_reason")},
+            metadata={"fine": fine.get("external_fine_id"), "fine_record_id": fine.get("id"),
+                      "po_line_id": fine.get("po_line_id"), "fine_type": final.get("metric")},
+        )
     return {
         "run_id": run_id,
+        "trace_id": trace_id,
         "case_id": case_id,
         "status": final["status"],
         "fine_type": final.get("metric"),
