@@ -191,7 +191,7 @@ def get_finding(finding_id: uuid.UUID, db: Session = Depends(get_db)):
 @router.post("/investigation-cases/{case_id}/evaluate", response_model=EvaluationResponse, status_code=201)
 def post_evaluation(case_id: uuid.UUID, payload: EvaluationCreateRequest, db: Session = Depends(get_db)):
     with db.begin():
-        evaluation = create_evaluation(db, case_id=case_id, finding_id=payload.finding_id)
+        evaluation = create_evaluation(db, case_id=case_id, **payload.model_dump())
     return evaluation
 
 
@@ -216,7 +216,7 @@ def get_evaluation(evaluation_id: uuid.UUID, db: Session = Depends(get_db)):
 @router.post("/investigation-cases/{case_id}/outcome", response_model=OutcomeDetailResponse, status_code=201)
 def post_outcome(case_id: uuid.UUID, payload: OutcomeCreateRequest, db: Session = Depends(get_db)):
     with db.begin():
-        outcome = create_outcome(db, case_id=case_id, evaluation_id=payload.evaluation_id)
+        outcome = create_outcome(db, case_id=case_id, **payload.model_dump())
         lines = db.execute(select(LineOutcome).where(LineOutcome.case_outcome_id == outcome.id)).scalars().all()
         result = {"id": outcome.id, "investigation_case_id": outcome.investigation_case_id,
                   "evaluation_id": outcome.evaluation_id, "status": outcome.status,

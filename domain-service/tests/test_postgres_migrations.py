@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 import uuid
 from pathlib import Path
 
@@ -26,7 +27,7 @@ def pg_engine():
     with engine.connect() as connection:
         identity = connection.execute(text("SELECT current_database(), current_user")).one()
         assert identity == (DATABASE_NAME, "stephenhuang")
-        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0004_scrum15_domain_workflows"
+        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0005_dc_country"
     yield engine
     engine.dispose()
 
@@ -39,14 +40,10 @@ def test_postgres_legacy_backfill_preflight_and_safe_downgrade(pg_engine):
     original_url = make_url(os.environ["SCRUM15_TEST_DATABASE_URL"])
     schema_url = original_url.set(query={**original_url.query, "options": f"-csearch_path={schema}"})
     scratch_engine = create_engine(schema_url, pool_pre_ping=True)
-    alembic = Path(__file__).parents[1] / ".venv" / "bin" / "alembic"
-    if not alembic.exists():
-        pytest.fail(f"Alembic executable not found in project uv environment: {alembic}")
-
     def migrate(*args, should_pass=True):
         env = dict(os.environ, DATABASE_URL=str(schema_url))
         result = subprocess.run(
-            [str(alembic), *args], cwd=Path(__file__).parents[1], env=env,
+            [sys.executable, "-m", "alembic", *args], cwd=Path(__file__).parents[1], env=env,
             capture_output=True, text=True, timeout=60,
         )
         output = result.stdout + result.stderr

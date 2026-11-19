@@ -54,7 +54,7 @@ def pg_engine():
             "SELECT current_database(), current_user, (SELECT version_num FROM alembic_version)"
         )).one()
         assert database == DATABASE_NAME and role == "stephenhuang"
-        assert revision == "0004_scrum15_domain_workflows"
+        assert revision == "0005_dc_country"
     yield engine
     engine.dispose()
 

@@ -63,11 +63,17 @@ class CaseStatusRequest(BaseModel):
     reason: str | None = None
 
 
+class EvidenceSourceRef(BaseModel):
+    source: Literal["asn", "appointment_history", "gate_log", "po_versions", "receiving"]
+    record_id: UUID
+
+
 class FindingFactRequest(BaseModel):
     fact_key: str = Field(min_length=1, max_length=150)
     fact_value: str | None = None
     source_description: str | None = None
     evidence_ids: list[UUID] = Field(default_factory=list)
+    source_refs: list[EvidenceSourceRef] = Field(default_factory=list)
 
 
 class FindingCreateRequest(BaseModel):
@@ -106,6 +112,7 @@ class FindingResponse(BaseModel):
 
 class EvaluationCreateRequest(BaseModel):
     finding_id: UUID
+    reuse_existing: bool = False
 
 
 class EvaluationResponse(BaseModel):
@@ -122,6 +129,7 @@ class EvaluationResponse(BaseModel):
 
 class OutcomeCreateRequest(BaseModel):
     evaluation_id: UUID
+    reuse_existing: bool = False
 
 
 class OutcomeResponse(BaseModel):
@@ -193,6 +201,7 @@ class DistributionCenterResponse(ORMModel):
     city: str | None = None
     state: str | None = None
     postal_code: str | None = None
+    country_code: str | None = None
     created_at: AwareUTCDateTime
 
 class PurchaseOrderResponse(ORMModel):

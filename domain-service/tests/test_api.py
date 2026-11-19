@@ -40,7 +40,7 @@ def test_case_and_dispute_api_contracts_and_pagination(monkeypatch):
     with Session(engine) as session:
         supplier = Supplier(supplier_code=f"api-{uuid.uuid4()}", name="Supplier")
         other_supplier = Supplier(supplier_code=f"api-other-{uuid.uuid4()}", name="Other")
-        dc = DistributionCenter(dc_code=f"api-{uuid.uuid4()}", name="DC")
+        dc = DistributionCenter(dc_code=f"api-{uuid.uuid4()}", name="DC", country_code="US")
         po = PurchaseOrder(po_number=f"API-{uuid.uuid4()}", supplier=supplier, distribution_center=dc)
         line = POLine(purchase_order=po, line_number=1)
         fine = FineRecord(po_line=line, po_version_used=1, ordered_cases=10,
@@ -50,17 +50,18 @@ def test_case_and_dispute_api_contracts_and_pagination(monkeypatch):
         fine2 = FineRecord(po_line=line2, po_version_used=1, ordered_cases=10,
             received_cases=10, non_compliant_cases=0, system_accountability="supplier",
             original_amount=Decimal("0.00"), case_cost_snapshot=Decimal("10.0000"), fine_rate=Decimal("0.030000"))
-        session.add(AppointmentEvent(po_line=line, event_ts=datetime.now(timezone.utc), action="rescheduled", initiated_by="dc"))
+        appointment = AppointmentEvent(po_line=line, event_ts=datetime.now(timezone.utc), action="rescheduled", initiated_by="dc")
+        other_appointment = AppointmentEvent(po_line=line2, event_ts=datetime.now(timezone.utc), action="created")
         asn = ASN(asn_number=f"ASN-{uuid.uuid4()}")
         asn_line = ASNLine(asn=asn, po_line=line, shipped_cases=10)
         delivery = Delivery(distribution_center=dc, delivery_number=f"DEL-{uuid.uuid4()}", actual_arrival_ts=datetime.now(timezone.utc))
         delivery_line = DeliveryLine(asn_line=asn_line, delivery=delivery, allocated_cases=10)
         version = POLineVersion(po_line=line, version_number=1, ordered_cases=10, issued_at=datetime.now(timezone.utc))
+        gate = GateLog(delivery=delivery, check_in_ts=datetime.now(timezone.utc), gate_identifier="G1")
+        receipt = ReceivingRecord(delivery_line=delivery_line, received_at=datetime.now(timezone.utc), received_cases=8)
         session.add_all([
-            supplier, other_supplier, dc, po, line, line2, fine, fine2, asn,
-            asn_line, delivery, delivery_line, version,
-            GateLog(delivery=delivery, check_in_ts=datetime.now(timezone.utc), gate_identifier="G1"),
-            ReceivingRecord(delivery_line=delivery_line, received_at=datetime.now(timezone.utc), received_cases=8),
+            supplier, other_supplier, dc, po, line, line2, fine, fine2, asn, appointment, other_appointment,
+            asn_line, delivery, delivery_line, version, gate, receipt,
             WeatherAlert(distribution_center=dc, external_alert_id=f"W-{uuid.uuid4()}", alert_date=date.today(), alert_type="storm"),
             PolicyConfiguration(policy_version="0.1", effective_from=datetime(1970, 1, 1, tzinfo=timezone.utc), manager_approval_threshold=Decimal("500.00"), fine_rate=Decimal("0.030000")),
             EvidenceRecord(evidence_type="receipt", external_id=f"E-{uuid.uuid4()}", snapshot={"received_cases": 8}),
@@ -69,6 +70,14 @@ def test_case_and_dispute_api_contracts_and_pagination(monkeypatch):
         fine_id, fine2_id, supplier_id, other_supplier_id, line_id, line2_id = fine.id, fine2.id, supplier.id, other_supplier.id, line.id, line2.id
         po_id, asn_id, delivery_id, dc_id = po.id, asn.id, delivery.id, dc.id
         evidence_id = session.query(EvidenceRecord).one().id
+        foreign_appointment_id = str(other_appointment.id)
+        source_refs = [
+            {"source": source, "record_id": str(record.id)}
+            for source, record in (
+                ("asn", asn_line), ("appointment_history", appointment), ("gate_log", gate),
+                ("po_versions", version), ("receiving", receipt),
+            )
+        ]
 
     def override_db():
         with Session(engine) as session:
@@ -89,13 +98,26 @@ def test_case_and_dispute_api_contracts_and_pagination(monkeypatch):
             assert reused.json()["id"] == case_id
             assert client.patch(f"/api/v1/investigation-cases/{case_id}/status", json={"status": "investigating"}).status_code == 200
             assert client.get(f"/api/v1/investigation-cases/{case_id}").status_code == 200
-            finding = client.post(f"/api/v1/investigation-cases/{case_id}/findings", json={
-                "summary": "reviewed", "cause_code": "C1",
-                "facts": [{"fact_key": "receipt", "fact_value": "8", "evidence_ids": [str(evidence_id)]}],
+            finding_path = f"/api/v1/investigation-cases/{case_id}/findings"
+            invalid_finding = client.post(finding_path, json={
+                "facts": [{"fact_key": "appointment", "source_refs": [
+                    source_refs[1], {"source": "appointment_history", "record_id": foreign_appointment_id},
+                ]}],
             })
+            assert invalid_finding.status_code == 422, invalid_finding.text
+            with Session(engine) as session:
+                assert session.query(EvidenceRecord).count() == 1
+            finding_payload = {
+                "summary": "reviewed", "cause_code": "C1", "agent_run_id": str(uuid.uuid4()),
+                "facts": [{"fact_key": "receipt", "fact_value": "8",
+                           "evidence_ids": [str(evidence_id)], "source_refs": source_refs}],
+            }
+            finding = client.post(finding_path, json=finding_payload)
             assert finding.status_code == 201, finding.text
             assert finding.json()["version_number"] == 1
             finding_id = finding.json()["id"]
+            assert client.post(finding_path, json=finding_payload).json()["id"] == finding_id
+            assert len(finding.json()["facts"][0]["evidence_ids"]) == 6
             assert client.get(f"/api/v1/investigation-cases/{case_id}/findings").status_code == 200
             assert client.get(f"/api/v1/findings/{finding_id}").status_code == 200
             queue = client.get("/api/v1/investigation-cases?page=1&page_size=1&sort_by=created_at")
@@ -212,7 +234,13 @@ def test_case_and_dispute_api_contracts_and_pagination(monkeypatch):
             assert client.get(f"/api/v1/investigation-cases/{case_id}").json()["status"] == "closed"
             populated_context = client.get(f"/api/v1/investigation-contexts/{fine_id}")
             assert populated_context.status_code == 200, populated_context.text
-            assert populated_context.json()["case_context"][0]["evidence_context"][0]["evidence_links"][0]["evidence"]["id"] == str(evidence_id)
+            context = populated_context.json()
+            assert context["distribution_center"]["country_code"] == "US"
+            linked_evidence = [item["evidence"] for item in context["case_context"][0]["evidence_context"][0]["evidence_links"]]
+            assert any(item["id"] == str(evidence_id) for item in linked_evidence)
+            assert {(item["evidence_type"], item["external_id"]) for item in linked_evidence if item["id"] != str(evidence_id)} == {
+                (item["source"], item["record_id"]) for item in source_refs
+            }
             assert populated_context.json()["case_context"][0]["outcomes"][0]["line_outcomes"]
 
             for path in [

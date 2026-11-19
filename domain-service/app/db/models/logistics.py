@@ -36,6 +36,7 @@ class DistributionCenter(Base):
     city: Mapped[str | None] = mapped_column(String(150))
     state: Mapped[str | None] = mapped_column(String(100))
     postal_code: Mapped[str | None] = mapped_column(String(30))
+    country_code: Mapped[str | None] = mapped_column(String(2))
     created_at: Mapped[datetime] = created_at()
     purchase_orders: Mapped[list[PurchaseOrder]] = relationship(back_populates="distribution_center", passive_deletes="all")
     weather_alerts: Mapped[list[WeatherAlert]] = relationship(back_populates="distribution_center", passive_deletes="all")
