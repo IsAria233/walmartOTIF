@@ -49,12 +49,14 @@ database.
 The Domain Service owns Fine Records, Disputes and Dispute Lines, Investigation
 Cases, Findings and Evidence references, Evaluations, Outcomes, Approvals, and
 the documented OTIF rules. Agent Run IDs and Auth user IDs are external UUID
-references. There are no local Agent or User tables. Agent dispatch, Gateway
-authentication/JWT verification, and agent orchestration are outside this
-service. `POST /api/v1/investigation-cases` is intended for internal Domain
-callers; this application currently has no internal-caller authorization
-mechanism. Approval routes require the trusted Gateway to set
-`request.state.authenticated_user_id`; until wired, they return 503.
+references. Agent dispatch and orchestration are handled by the Agent Service.
+`POST /api/v1/investigation-cases` is intended for internal Domain callers.
+Internal caller authentication for that route is pending.
+
+`POST /api/v1/outcomes/{id}/approvals` verifies the Auth Service bearer JWT
+with `JWT_SECRET`. The `associate` stage requires `dispute_associate`, and the
+`manager` stage requires `compliance_manager`. An invalid or missing token
+returns `401`. A valid token with the wrong role returns `403`.
 
 ## Route groups
 
@@ -146,8 +148,8 @@ Evaluate an exact Finding, then create an Outcome:
 {"evaluation_id":"<evaluation-uuid>"}
 ```
 
-Record a line-specific Associate decision (the authenticated user comes from
-Gateway request state, never this body):
+Record a line-specific Associate decision with `Authorization: Bearer <token>`.
+The decision records the user UUID from the verified token.
 
 ```json
 {"line_outcome_id":"<line-outcome-uuid>","stage":"associate","decision":"approved","comment":"Reviewed"}

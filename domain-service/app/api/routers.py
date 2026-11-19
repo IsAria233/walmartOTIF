@@ -5,13 +5,14 @@ import math
 import uuid
 from datetime import datetime
 from decimal import Decimal
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import AwareDatetime
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.api.auth import AuthenticatedUser, get_current_user
 from app.api.schemas import (
     ASNPageResponse, ASNResponse, ApprovalDecisionRequest, ApprovalDecisionResponse,
     ApprovalPageResponse, AppointmentPageResponse, CaseCreateRequest,
@@ -239,24 +240,25 @@ def get_outcomes(case_id: uuid.UUID, page: int = Query(1, ge=1), page_size: int 
     return page_data
 
 
-def authenticated_user(request: Request) -> uuid.UUID:
-    # Gateway integration supplies this trusted request-state attribute later.
-    value = getattr(request.state, "authenticated_user_id", None)
-    if not value:
-        raise HTTPException(status_code=503, detail={"error": {"code": "identity_unavailable", "message": "Trusted caller identity is not configured"}})
-    try:
-        return uuid.UUID(str(value))
-    except ValueError as exc:
-        raise HTTPException(status_code=503, detail={"error": {"code": "identity_invalid", "message": "Trusted caller identity is invalid"}}) from exc
+APPROVAL_ROLES = {"associate": "dispute_associate", "manager": "compliance_manager"}
 
 
 @router.post("/outcomes/{outcome_id}/approvals", response_model=ApprovalDecisionResponse, status_code=201)
-def post_approval(outcome_id: uuid.UUID, payload: ApprovalDecisionRequest, request: Request, db: Session = Depends(get_db)):
-    user_id = authenticated_user(request)
+def post_approval(
+    outcome_id: uuid.UUID,
+    payload: ApprovalDecisionRequest,
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    db: Session = Depends(get_db),
+):
+    if user.role != APPROVAL_ROLES[payload.stage]:
+        raise HTTPException(
+            status_code=403,
+            detail={"error": {"code": "approval_forbidden", "message": "Your role cannot decide this approval stage"}},
+        )
     with db.begin():
         decision = decide_line(db, outcome_id=outcome_id,
             line_outcome_id=payload.line_outcome_id, stage=payload.stage,
-            decision=payload.decision, auth_user_id=user_id, comment=payload.comment)
+            decision=payload.decision, auth_user_id=user.user_id, comment=payload.comment)
     return serialize(decision)
 
 

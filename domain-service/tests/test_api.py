@@ -1,7 +1,9 @@
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+import secrets
 import uuid
 
+import jwt
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event
 from sqlalchemy.dialects.postgresql import JSONB
@@ -26,6 +28,8 @@ def _sqlite_jsonb(type_, compiler, **kw):
 
 
 def test_case_and_dispute_api_contracts_and_pagination(monkeypatch):
+    jwt_secret = secrets.token_hex(32)
+    monkeypatch.setenv("JWT_SECRET", jwt_secret)
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
 
     @event.listens_for(engine, "connect")
@@ -41,7 +45,7 @@ def test_case_and_dispute_api_contracts_and_pagination(monkeypatch):
         line = POLine(purchase_order=po, line_number=1)
         fine = FineRecord(po_line=line, po_version_used=1, ordered_cases=10,
             received_cases=8, non_compliant_cases=2, system_accountability="supplier",
-            original_amount=Decimal("20.00"), case_cost_snapshot=Decimal("10.0000"), fine_rate=Decimal("0.030000"))
+            original_amount=Decimal("666.00"), case_cost_snapshot=Decimal("10.0000"), fine_rate=Decimal("0.030000"))
         line2 = POLine(purchase_order=po, line_number=2)
         fine2 = FineRecord(po_line=line2, po_version_used=1, ordered_cases=10,
             received_cases=10, non_compliant_cases=0, system_accountability="supplier",
@@ -105,20 +109,7 @@ def test_case_and_dispute_api_contracts_and_pagination(monkeypatch):
             assert filtered_queue.json()["total"] == 1
             fine_response = client.get(f"/api/v1/fine-records/{fine_id}")
             assert fine_response.status_code == 200
-            assert fine_response.json()["original_amount"] == "20.00"
-            auth_unavailable = client.post(f"/api/v1/outcomes/{uuid.uuid4()}/approvals", json={
-                "line_outcome_id": str(uuid.uuid4()), "stage": "associate", "decision": "approved"
-            })
-            assert auth_unavailable.status_code == 503
-            assert auth_unavailable.json()["error"]["code"] == "identity_unavailable"
-            fine_response = client.get(f"/api/v1/fine-records/{fine_id}")
-            assert fine_response.status_code == 200
-            assert fine_response.json()["original_amount"] == "20.00"
-            auth_unavailable = client.post(f"/api/v1/outcomes/{uuid.uuid4()}/approvals", json={
-                "line_outcome_id": str(uuid.uuid4()), "stage": "associate", "decision": "approved"
-            })
-            assert auth_unavailable.status_code == 503
-            assert auth_unavailable.json()["error"]["code"] == "identity_unavailable"
+            assert fine_response.json()["original_amount"] == "666.00"
 
             dispute = client.post("/api/v1/disputes", json={
                 "supplier_id": str(supplier_id),
@@ -184,13 +175,41 @@ def test_case_and_dispute_api_contracts_and_pagination(monkeypatch):
             assert len(outcome.json()["line_outcomes"]) == 1
             outcome_id = outcome.json()["id"]
             assert client.get(f"/api/v1/investigation-cases/{case_id}/outcome").status_code == 200
-            monkeypatch.setattr("app.api.routers.authenticated_user", lambda request: uuid.uuid4())
             line_outcome_id = outcome.json()["line_outcomes"][0]["id"]
-            approval = client.post(f"/api/v1/outcomes/{outcome_id}/approvals", json={
+            approval_path = f"/api/v1/outcomes/{outcome_id}/approvals"
+            associate_request = {
                 "line_outcome_id": line_outcome_id, "stage": "associate", "decision": "approved"
-            })
+            }
+            manager_request = {**associate_request, "stage": "manager"}
+            user_ids = {role: str(uuid.uuid4()) for role in ("dispute_associate", "compliance_manager", "admin")}
+
+            def bearer_headers(role, *, key=jwt_secret, minutes=5):
+                token = jwt.encode({
+                    "sub": user_ids[role], "role": role,
+                    "exp": datetime.now(timezone.utc) + timedelta(minutes=minutes),
+                }, key, algorithm="HS256")
+                return {"Authorization": f"Bearer {token}"}
+
+            for headers in ({}, bearer_headers("dispute_associate", key=secrets.token_hex(32)),
+                            bearer_headers("dispute_associate", minutes=-1)):
+                denied = client.post(approval_path, json=associate_request, headers=headers)
+                assert denied.status_code == 401
+                assert denied.headers["WWW-Authenticate"] == "Bearer"
+            for role in ("compliance_manager", "admin"):
+                denied = client.post(approval_path, json=associate_request, headers=bearer_headers(role))
+                assert denied.status_code == 403
+                assert denied.json()["error"]["code"] == "approval_forbidden"
+
+            approval = client.post(approval_path, json=associate_request, headers=bearer_headers("dispute_associate"))
             assert approval.status_code == 201, approval.text
-            assert client.get(f"/api/v1/outcomes/{outcome_id}/approvals").status_code == 200
+            assert approval.json()["auth_user_id"] == user_ids["dispute_associate"]
+            wrong_stage = client.post(approval_path, json=manager_request, headers=bearer_headers("dispute_associate"))
+            assert wrong_stage.status_code == 403
+            manager_approval = client.post(approval_path, json=manager_request, headers=bearer_headers("compliance_manager"))
+            assert manager_approval.status_code == 201, manager_approval.text
+            assert manager_approval.json()["auth_user_id"] == user_ids["compliance_manager"]
+            assert client.get(approval_path).status_code == 200
+            assert client.get(f"/api/v1/investigation-cases/{case_id}").json()["status"] == "closed"
             populated_context = client.get(f"/api/v1/investigation-contexts/{fine_id}")
             assert populated_context.status_code == 200, populated_context.text
             assert populated_context.json()["case_context"][0]["evidence_context"][0]["evidence_links"][0]["evidence"]["id"] == str(evidence_id)
