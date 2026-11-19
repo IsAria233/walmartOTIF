@@ -1,7 +1,6 @@
 """Auth service for internal users."""
 
 import os
-from datetime import datetime, timedelta, timezone
 from typing import Annotated, Literal
 from uuid import UUID
 
@@ -14,13 +13,11 @@ from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, SecretStr, ValidationError
 
+from app.users import decode_token, find_user, issue_token
+
 app = FastAPI(title="auth-service")
 password_hasher = PasswordHasher()
 bearer_scheme = HTTPBearer(auto_error=False, bearerFormat="JWT")
-DEMO_USERNAME = "demo_associate"
-DEMO_USER_ID = UUID("b8fe47fd-7f89-49bf-8fa9-e4c7da8c72f4")
-JWT_ALGORITHM = "HS256"
-TOKEN_LIFETIME = timedelta(minutes=30)
 
 
 class LoginRequest(BaseModel):
@@ -57,12 +54,7 @@ def get_current_user(
         raise unauthorized
 
     try:
-        claims = jwt.decode(
-            credentials.credentials,
-            get_signing_key(),
-            algorithms=[JWT_ALGORITHM],
-            options={"require": ["sub", "role", "exp"]},
-        )
+        claims = decode_token(credentials.credentials, get_signing_key())
         return AuthenticatedUser(user_id=claims["sub"], role=claims["role"])
     except (jwt.InvalidTokenError, ValidationError) as exc:
         raise unauthorized from exc
@@ -93,22 +85,15 @@ def login(credentials: LoginRequest, response: Response) -> LoginResponse:
     except (InvalidHashError, VerificationError) as exc:
         raise HTTPException(status_code=503, detail="Auth service is not configured") from exc
 
-    if credentials.username != DEMO_USERNAME or not password_matches:
+    user = find_user(credentials.username)
+    if user is None or not password_matches:
         raise HTTPException(
             status_code=401,
             detail="Invalid username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    access_token = jwt.encode(
-        {
-            "sub": str(DEMO_USER_ID),
-            "role": "dispute_associate",
-            "exp": datetime.now(timezone.utc) + TOKEN_LIFETIME,
-        },
-        signing_key,
-        algorithm=JWT_ALGORITHM,
-    )
+    access_token = issue_token(user, signing_key)
     response.headers["Cache-Control"] = "no-store"
     return LoginResponse(access_token=access_token)
 

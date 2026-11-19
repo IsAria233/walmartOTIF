@@ -1,8 +1,17 @@
 # Auth service
 
-`POST /login` accepts a JSON object with `username` and `password`. The demo
-username is `demo_associate`. Its stable user UUID is the JWT `sub`, and its
-`dispute_associate` role is set by the service. Access tokens expire in 30 minutes.
+`POST /login` accepts a JSON object with `username` and `password`. Access tokens
+expire in 30 minutes. Each seeded account's stable user UUID is the JWT `sub`, and
+its role is set by the service:
+
+| Username | Role |
+| --- | --- |
+| `demo_associate` | `dispute_associate` |
+| `demo_manager` | `compliance_manager` |
+| `demo_admin` | `admin` |
+
+All three share the demo password whose hash is in `AUTH_DEMO_PASSWORD_HASH`.
+There is no public registration.
 
 ## Run locally
 
@@ -29,3 +38,13 @@ Requests with a missing, invalid, or expired token return `401`.
 For Docker Compose, set both variables in the repository's `.env` file. Put the
 Argon2 hash in single quotes so Compose reads the dollar signs literally. The
 gateway exposes `POST /api/auth/login` and `GET /api/auth/me`.
+
+## Tests
+
+```bash
+python -m pip install -r requirements-dev.txt
+python -m pytest
+```
+
+`tests/test_users.py` needs only PyJWT. `tests/test_api.py` needs the full service
+dependencies and is skipped when they are not installed.
