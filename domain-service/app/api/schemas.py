@@ -161,6 +161,7 @@ class AttachmentInput(BaseModel):
 
 class DisputeCreateRequest(BaseModel):
     supplier_id: UUID
+    reason_text: str | None = None
     lines: list[DisputeLineInput] = Field(min_length=1, max_length=3)
     attachments: list[AttachmentInput] = Field(default_factory=list)
 

@@ -6,6 +6,7 @@ from uuid import UUID
 
 import httpx
 
+from .guardrails import PromptInjectionDetected, contains_instruction
 from .investigation import CaseIntake, Evidence, EvidenceReadError, EvidenceSource
 
 
@@ -87,6 +88,24 @@ READERS = {
 }
 
 
+def _check_supplier_text(context: dict[str, Any], case_id: str) -> None:
+    case = next((item for item in context.get("case_context", []) if item["case"]["id"] == case_id), None)
+    if case is None:
+        return
+    line_ids = {None, *(line["id"] for line in case["dispute_lines"])}
+    dispute_ids = {line["dispute_id"] for line in case["dispute_lines"]}
+    for item in context.get("disputes", []):
+        dispute = item["dispute"]
+        if dispute["id"] not in dispute_ids:
+            continue
+        attachments = [
+            attachment.get("metadata_json") for attachment in item["attachments"]
+            if attachment.get("dispute_line_id") in line_ids
+        ]
+        if contains_instruction(dispute.get("reason_text")) or contains_instruction(attachments):
+            raise PromptInjectionDetected
+
+
 class DomainEvidenceReader:
     def __init__(self, client: httpx.Client):
         self.client = client
@@ -124,6 +143,7 @@ class DomainEvidenceReader:
     ) -> dict[EvidenceSource, list[Evidence]]:
         context = self._read_context(case_id, fine_record_id)
         try:
+            _check_supplier_text(context, str(UUID(case_id)))
             return {source: READERS[source](context, context["po_line"]["id"]) for source in sources}
         except (KeyError, TypeError, ValueError) as exc:
             raise EvidenceReadError("Domain evidence response has an invalid shape") from exc

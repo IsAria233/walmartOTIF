@@ -13,7 +13,10 @@ from app.services.dispute_service import add_dispute_line
 from app.services.exceptions import InvalidRequest, NotFound
 
 
-def submit_dispute(session: Session, *, supplier_id: uuid.UUID, lines: list[dict], attachments: list[dict] | None = None) -> Dispute:
+def submit_dispute(
+    session: Session, *, supplier_id: uuid.UUID, lines: list[dict],
+    attachments: list[dict] | None = None, reason_text: str | None = None,
+) -> Dispute:
     if not 1 <= len(lines) <= 3:
         raise InvalidRequest("A Dispute must contain between one and three Fine Records")
     fine_ids = [line["fine_record_id"] for line in lines]
@@ -26,7 +29,9 @@ def submit_dispute(session: Session, *, supplier_id: uuid.UUID, lines: list[dict
     ).scalars().all()
     if set(locked_ids) != set(fine_ids):
         raise NotFound("Fine Record not found")
-    dispute = Dispute(supplier_id=supplier_id, submitted_at=datetime.now(timezone.utc), status="submitted")
+    dispute = Dispute(
+        supplier_id=supplier_id, submitted_at=datetime.now(timezone.utc), status="submitted", reason_text=reason_text,
+    )
     session.add(dispute)
     session.flush()
     seen = set()

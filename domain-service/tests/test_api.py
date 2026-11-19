@@ -135,10 +135,12 @@ def test_case_and_dispute_api_contracts_and_pagination(monkeypatch):
 
             dispute = client.post("/api/v1/disputes", json={
                 "supplier_id": str(supplier_id),
+                "reason_text": "The carrier reported a receiving discrepancy.",
                 "lines": [{"fine_record_id": str(fine_id), "amount_disputed": "20.00"}],
                 "attachments": [{"fine_record_id": str(fine_id), "filename": "proof.pdf"}],
             })
             assert dispute.status_code == 201, dispute.text
+            assert dispute.json()["dispute"]["reason_text"] == "The carrier reported a receiving discrepancy."
             assert len(dispute.json()["lines"]) == 1
             assert dispute.json()["attachments"][0]["dispute_line_id"] == dispute.json()["lines"][0]["id"]
             bad_dispute = client.post("/api/v1/disputes", json={

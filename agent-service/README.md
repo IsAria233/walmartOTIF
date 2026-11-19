@@ -59,6 +59,31 @@ snapshot used by the analyzer. The intake derives the U.S. DC scope flag
 from the destination country. The model receives planned sources and selected fields.
 LangGraph checks the cause and citations before submitting a Finding.
 
+## Prompt injection guardrail
+
+Agent checks the associated supplier dispute text, available attachment
+metadata, and projected evidence for explicit instructions targeting the
+workflow. These checks cover the text available in Domain. Attachment files
+and linked URLs are outside this reader's scope.
+
+A detected instruction goes to the existing Domain handoff queue with
+`injection_detected: true` in the Agent response and a fixed review reason.
+The model's structured output can also request the same handoff. SEED-03
+supplies the regression input. The runtime follows section 6 of the OTIF
+policy for the handoff.
+
+## Observability
+
+Agent emits structured logs with a deterministic trace ID based on `run_id`.
+Use that ID to correlate start, retry, and approval resume with evidence
+reads, model calls, Domain operations, and the handoff result. Events carry
+status, duration, review or error codes, and model token counts when
+available. Trace payloads contain operational metadata only.
+
+Set both `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` to also export
+observations to Langfuse. The endpoint can be set with `LANGFUSE_BASE_URL`
+or the existing `LANGFUSE_HOST` variable. Local logs work with blank keys.
+
 ## Run the tests
 
 From `agent-service/`, install the service requirements and run the workflow tests.

@@ -10,7 +10,9 @@ from openai import OpenAI
 from app.domain_evidence import DomainEvidenceReader
 from app.investigation import build_investigation_graph
 from app.model_finding import OpenAIFindingAnalyzer, open_finding_analyzer
+from app.observability import observe
 from test_domain_evidence import domain_context, record_id
+from test_investigation import SEED_CASE
 
 
 class TrialDomain:
@@ -43,8 +45,10 @@ class TrialDomain:
         return "pending_approval"
 
 
-def run_trial(number, analyzer):
+def run_trial(number, analyzer, *, prepare_context=None):
     case_id, fine_id, context = domain_context(number)
+    if prepare_context is not None:
+        prepare_context(case_id, context)
 
     def context_response(request):
         assert request.url.path == f"/api/v1/investigation-contexts/{fine_id}"
@@ -60,10 +64,10 @@ def run_trial(number, analyzer):
         return result, domain.writes
 
 
-def model_response(content):
+def model_response(content, *, usage=None):
     return httpx.Response(200, json={
         "id": "resp_test", "object": "response", "created_at": 0, "model": "gpt-4.1-mini",
-        "status": "completed", "output": [{
+        "status": "completed", "usage": usage, "output": [{
             "id": "msg_test", "type": "message", "role": "assistant", "status": "completed",
             "content": [content],
         }],
@@ -74,7 +78,7 @@ def demo_finding(cause_code, evidence_ids):
     return {
         "cause_code": cause_code, "summary": "The evidence supports this cause", "confidence": 0.95,
         "facts": [{"fact_key": "check", "fact_value": "Evidence reviewed", "evidence_ids": evidence_ids}],
-        "handoff_reason": None,
+        "handoff_reason": None, "injection_detected": False,
     }
 
 
@@ -146,6 +150,60 @@ class ModelFindingTests(unittest.TestCase):
                 self.assertEqual(result["result"]["status"], "needs_review")
                 self.assertIn(error, result["result"]["handoff_reason"])
                 self.assertFalse(writes)
+
+    def test_seed03_claim_is_handed_off_before_model_or_financial_writes(self):
+        dispute = json.loads(SEED_CASE.with_name("SEED-03_input.json").read_text())["dispute"]
+
+        def prepare(case_id, context):
+            dispute_id = record_id(dispute["dispute_id"])
+            context["case_context"] = [{
+                "case": {"id": case_id},
+                "dispute_lines": [{"id": record_id("seed03-line"), "dispute_id": dispute_id}],
+            }]
+            context["disputes"] = [{
+                "dispute": {"id": dispute_id, "reason_text": dispute["reason_text"]}, "attachments": [],
+            }]
+
+        def unreachable(request):
+            self.fail("The model must not receive blocked content")
+
+        result, writes = run_trial(3, self.sdk(unreachable), prepare_context=prepare)
+        self.assertEqual(result["result"]["status"], "needs_review")
+        self.assertEqual(result["result"]["handoff_id"], "test-handoff")
+        self.assertTrue(result["result"]["injection_detected"])
+        self.assertNotIn(dispute["reason_text"], json.dumps(result))
+        self.assertFalse(writes)
+
+    def test_model_injection_flag_discards_the_finding_and_records_handoff(self):
+        flagged = {
+            **demo_finding("C2", [record_id("APT-9002-2")]), "injection_detected": True,
+            "summary": "Synthetic content the model should not echo to the reviewer",
+        }
+        result, writes = run_trial(2, self.sdk(lambda request: model_response({
+            "type": "output_text", "text": json.dumps(flagged), "annotations": [],
+        })))
+        self.assertTrue(result["result"]["injection_detected"])
+        self.assertEqual(result["result"]["status"], "needs_review")
+        self.assertNotIn("finding", result)
+        self.assertFalse(writes)
+
+    def test_model_usage_is_logged_without_prompt_or_response_content(self):
+        result = demo_finding("C2", ["synthetic-id"])
+        usage = {
+            "input_tokens": 12, "output_tokens": 6, "total_tokens": 18,
+            "input_tokens_details": {"cached_tokens": 0}, "output_tokens_details": {"reasoning_tokens": 0},
+        }
+        analyzer = self.sdk(lambda request: model_response({
+            "type": "output_text", "text": json.dumps(result), "annotations": [],
+        }, usage=usage))
+        with self.assertLogs("uvicorn.error.agent") as records:
+            with observe("test.run", as_type="agent", run_id="run", case_id="case"):
+                analyzer({"metric": "synthetic-metric"}, {"causes": ["C2"], "sources": []}, {})
+        event = json.loads(records.records[0].getMessage())
+        self.assertEqual(event["event"], "model.finding")
+        self.assertEqual(event["usage"], {"input": 12, "output": 6})
+        self.assertNotIn("synthetic-metric", str(event))
+        self.assertNotIn(result["summary"], str(event))
 
     @unittest.skipUnless(os.getenv("RUN_OPENAI_EVAL") == "1", "Live OpenAI trial is opt-in")
     def test_live_openai_seed_cases(self):

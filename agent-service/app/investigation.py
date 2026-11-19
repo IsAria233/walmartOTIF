@@ -2,6 +2,7 @@
 
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from functools import wraps
 from typing import Any, Literal, NotRequired, Protocol, TypedDict
 
 from langchain_core.runnables import RunnableConfig
@@ -11,6 +12,9 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import interrupt
 from pydantic import BaseModel, Field, ValidationError
+
+from .guardrails import UNTRUSTED_INSTRUCTIONS, PromptInjectionDetected, contains_instruction
+from .observability import ObservationType, observe
 
 Cause = Literal["C1", "C2", "C3", "C4", "C5"]
 EvidenceSource = Literal["asn", "appointment_history", "gate_log", "po_versions", "receiving"]
@@ -87,6 +91,8 @@ class InvestigationState(InvestigationInput, total=False):
     outcome_id: str
     status: RunStatus
     handoff_reason: str
+    review_code: str
+    injection_detected: bool
     missing_sources: list[EvidenceSource]
     handoff_id: str
     result: dict[str, Any]
@@ -144,7 +150,7 @@ def build_investigation_graph(
         try:
             case = domain.read_intake(state["case_id"], state["fine_record_id"])
         except EvidenceReadError as exc:
-            return needs_review(str(exc))
+            return needs_review(str(exc), code="intake_unavailable")
         return {"case": case, "status": "investigating"}
 
     def scope_check(state: InvestigationState) -> dict[str, Any]:
@@ -157,9 +163,9 @@ def build_investigation_graph(
             return {"status": "out_of_scope"}
         missing_scope = [key for key in ("freight_terms", "channel", "ships_to_us_dc") if case[key] is None]
         if missing_scope:
-            return needs_review(f"Required scope data is missing: {', '.join(missing_scope)}")
+            return needs_review(f"Required scope data is missing: {', '.join(missing_scope)}", code="scope_missing")
         if case["metric"] not in PLANS:
-            return needs_review("The fine metric is missing or unsupported")
+            return needs_review("The fine metric is missing or unsupported", code="unsupported_metric")
         return {}
 
     def plan(state: InvestigationState) -> dict[str, Any]:
@@ -169,38 +175,45 @@ def build_investigation_graph(
         sources = state["plan"]["sources"]
         try:
             evidence = reader.read_evidence(state["case_id"], state["fine_record_id"], sources)
+        except PromptInjectionDetected:
+            return injection_handoff()
         except EvidenceReadError as exc:
-            return needs_review(str(exc))
+            return needs_review(str(exc), code="evidence_unavailable")
+        if contains_instruction(evidence) or contains_instruction(state["case"]):
+            return injection_handoff()
         missing = [source for source in sources if source not in evidence or (
             source != "appointment_history" and not evidence[source]
         )]
         if missing:
-            return {**needs_review(f"Missing evidence: {', '.join(missing)}"),
+            return {**needs_review(f"Missing evidence: {', '.join(missing)}", code="evidence_missing"),
                     "evidence": evidence, "missing_sources": missing}
         return {"evidence": evidence}
 
     def findings(state: InvestigationState) -> dict[str, Any]:
+        # Older checkpoints can resume here with evidence read before the guardrail.
+        if contains_instruction(state["evidence"]) or contains_instruction(state["case"]):
+            return injection_handoff()
         try:
             finding = Finding.model_validate(find_cause(state["case"], state["plan"], state["evidence"]))
         except FindingAnalysisError as exc:
-            return needs_review(str(exc))
+            return needs_review(str(exc), code="model_unavailable")
         except ValidationError:
-            return needs_review("The finding failed structured validation")
+            return needs_review("The finding failed structured validation", code="invalid_finding")
 
-        result = {"finding": finding.model_dump(mode="json")}
         if finding.injection_detected:
-            return {**result, **needs_review("Untrusted instructions detected in evidence")}
+            return injection_handoff()
+        result = {"finding": finding.model_dump(mode="json")}
         if finding.handoff_required:
-            return {**result, **needs_review(finding.handoff_reason or "Finding requires human review")}
+            return {**result, **needs_review(finding.handoff_reason or "Finding requires human review", code="model_handoff")}
         if finding.cause_code not in state["plan"]["causes"]:
-            return {**result, **needs_review("The cause is missing or does not fit the fine metric")}
+            return {**result, **needs_review("The cause is missing or does not fit the fine metric", code="invalid_cause")}
 
         evidence_ids = {record["record_id"] for records in state["evidence"].values() for record in records}
         if not finding.facts or any(
             not fact.evidence_ids or not set(fact.evidence_ids).issubset(evidence_ids)
             for fact in finding.facts
         ):
-            return {**result, **needs_review("One or more finding facts lack a valid evidence citation")}
+            return {**result, **needs_review("One or more finding facts lack a valid evidence citation", code="invalid_citation")}
         return result
 
     def submit_finding(state: InvestigationState) -> dict[str, Any]:
@@ -211,7 +224,7 @@ def build_investigation_graph(
         try:
             evaluation_id = domain.evaluate(state["case_id"], state["finding_id"])
         except PolicyReviewRequired as exc:
-            return needs_review(str(exc))
+            return needs_review(str(exc), code="policy_unavailable")
         return {"evaluation_id": evaluation_id}
 
     def create_outcome(state: InvestigationState) -> dict[str, Any]:
@@ -227,7 +240,7 @@ def build_investigation_graph(
     def finalize(state: InvestigationState) -> dict[str, Any]:
         fields = (
             "run_id", "case_id", "fine_record_id", "status", "finding_id",
-            "evaluation_id", "outcome_id", "handoff_reason",
+            "evaluation_id", "outcome_id", "handoff_reason", "injection_detected",
         )
         result = {key: state[key] for key in fields if key in state}
         if state["status"] != "needs_review":
@@ -240,17 +253,29 @@ def build_investigation_graph(
         return {"handoff_id": handoff_id, "result": {**result, "handoff_id": handoff_id}}
 
     graph = StateGraph(InvestigationState, input_schema=InvestigationInput)
-    graph.add_node("intake", intake)
+
+    def add_observed_node(name: str, node: Callable, as_type: ObservationType) -> None:
+        @wraps(node)
+        def tracked(state: InvestigationState, *args: Any, **kwargs: Any) -> dict[str, Any]:
+            with observe(f"workflow.{name}", as_type=as_type, run_id=state["run_id"], case_id=state["case_id"]) as event:
+                event.workflow_status = state.get("status")
+                result = node(state, *args, **kwargs)
+                event.workflow_status = result.get("status", event.workflow_status)
+                event.review_code = result.get("review_code", state.get("review_code"))
+                return result
+        graph.add_node(name, tracked)
+
+    add_observed_node("intake", intake, "tool")
     graph.add_node("scope_check", scope_check)
     graph.add_node("plan", plan)
-    graph.add_node("investigate", investigate)
-    graph.add_node("findings", findings)
-    graph.add_node("submit_finding", submit_finding)
-    graph.add_node("rules_call", rules_call)
-    graph.add_node("create_outcome", create_outcome)
-    graph.add_node("route", route)
-    graph.add_node("approval_pause", approval_pause)
-    graph.add_node("finalize", finalize)
+    add_observed_node("investigate", investigate, "tool")
+    add_observed_node("findings", findings, "chain")
+    add_observed_node("submit_finding", submit_finding, "tool")
+    add_observed_node("rules_call", rules_call, "tool")
+    add_observed_node("create_outcome", create_outcome, "tool")
+    add_observed_node("route", route, "tool")
+    add_observed_node("approval_pause", approval_pause, "chain")
+    add_observed_node("finalize", finalize, "chain")
 
     graph.add_edge(START, "intake")
     graph.add_edge("plan", "investigate")
@@ -271,8 +296,15 @@ def build_investigation_graph(
     return graph.compile(checkpointer=checkpointer)
 
 
-def needs_review(reason: str) -> dict[str, str]:
-    return {"status": "needs_review", "handoff_reason": reason.strip() or "Finding requires human review"}
+def needs_review(reason: str, *, code: str) -> dict[str, str]:
+    return {
+        "status": "needs_review", "review_code": code,
+        "handoff_reason": reason.strip() or "Finding requires human review",
+    }
+
+
+def injection_handoff() -> dict[str, Any]:
+    return {**needs_review(UNTRUSTED_INSTRUCTIONS, code="injection_detected"), "injection_detected": True}
 
 
 def is_handoff_or_out_of_scope(state: InvestigationState) -> bool:

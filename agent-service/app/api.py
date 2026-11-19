@@ -4,7 +4,7 @@ import os
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
-from typing import Annotated, Any, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Literal
 from uuid import UUID, uuid4, uuid5
 
 import jwt
@@ -15,7 +15,11 @@ from langgraph.types import Command, StateSnapshot
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from .domain_investigation import READY_TO_INVESTIGATE, DomainCase
-from .investigation import Finding, PENDING_APPROVAL, RunStatus
+from .investigation import Finding, InvestigationInput, PENDING_APPROVAL, RunStatus
+from .observability import observe
+
+if TYPE_CHECKING:
+    from langfuse import Langfuse
 
 router = APIRouter(prefix="/investigations", tags=["investigations"])
 bearer = HTTPBearer(auto_error=False, bearerFormat="JWT")
@@ -63,6 +67,7 @@ class InvestigationResponse(BaseModel):
     outcome_id: UUID | None = None
     handoff_reason: str | None = None
     handoff_id: UUID | None = None
+    injection_detected: bool = False
 
 
 @dataclass(frozen=True)
@@ -71,6 +76,7 @@ class InvestigationRuntime:
     get_case: Callable[[str], DomainCase]
     lock_case: Callable[[UUID], AbstractContextManager[None]]
     model_available: bool
+    langfuse: "Langfuse | None" = None
 
 
 def get_runtime(request: Request) -> InvestigationRuntime:
@@ -93,6 +99,20 @@ def _read_run(snapshot: StateSnapshot) -> InvestigationResponse:
     return InvestigationResponse.model_validate(snapshot.values)
 
 
+def _invoke_run(
+    runtime: InvestigationRuntime, case_id: UUID, run_id: UUID, phase: str,
+    value: InvestigationInput | Command | None,
+) -> InvestigationResponse:
+    config = _config(run_id)
+    with observe(phase, as_type="agent", run_id=str(run_id), case_id=str(case_id), client=runtime.langfuse) as event:
+        runtime.graph.invoke(value, config, durability="sync")
+        snapshot = runtime.graph.get_state(config)
+        run = _read_run(snapshot)
+        event.workflow_status = run.status
+        event.review_code = snapshot.values.get("review_code")
+        return run
+
+
 @router.post(
     "", response_model=InvestigationResponse, status_code=201,
     responses={200: {"model": InvestigationResponse, "description": "Existing run for this idempotency key"}},
@@ -110,19 +130,18 @@ def start_investigation(
         if "run_id" in snapshot.values:
             response.status_code = 200
             if snapshot.next and not snapshot.interrupts:
-                runtime.graph.invoke(None, config, durability="sync")
-            return _read_run(runtime.graph.get_state(config))
+                return _invoke_run(runtime, case_id, run_id, "investigation.retry", None)
+            return _read_run(snapshot)
 
         if not runtime.model_available:
             raise HTTPException(503, detail={"code": "model_not_configured"})
         case = runtime.get_case(str(case_id))
         if case.status not in READY_TO_INVESTIGATE:
             raise HTTPException(409, "Case is not ready for a new investigation")
-        runtime.graph.invoke(
+        return _invoke_run(
+            runtime, case_id, run_id, "investigation.start",
             {"run_id": str(run_id), "case_id": str(case_id), "fine_record_id": str(case.fine_record_id)},
-            config, durability="sync",
         )
-        return _read_run(runtime.graph.get_state(config))
 
 
 @router.get("/{run_id}", response_model=InvestigationResponse, dependencies=[Depends(require_internal_user)])
@@ -141,8 +160,7 @@ def resume_investigation(
         run = _read_run(snapshot)
         if run.status in PENDING_APPROVAL and snapshot.next:
             command = Command(resume=True) if snapshot.interrupts else None
-            runtime.graph.invoke(command, config, durability="sync")
-            return _read_run(runtime.graph.get_state(config))
+            return _invoke_run(runtime, case_id, run_id, "investigation.resume", command)
         if snapshot.next:
             raise HTTPException(409, "Investigation has not reached approval")
         return run

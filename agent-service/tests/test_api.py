@@ -76,10 +76,12 @@ class InvestigationApiTests(unittest.TestCase):
             domain=self.domain, find_cause=seed_finding, checkpointer=InMemorySaver(),
         )
         self.model_available = True
+        self.langfuse = None
         self.enterContext(patch.dict(os.environ, {"JWT_SECRET": "test-signing-key-for-investigation-api"}))
         self.addCleanup(app.dependency_overrides.pop, get_runtime)
         app.dependency_overrides[get_runtime] = lambda: InvestigationRuntime(
             self.graph, self.domain.get_case, lambda _: nullcontext(), self.model_available,
+            langfuse=self.langfuse,
         )
         token = jwt.encode({
             "sub": str(uuid4()), "role": "dispute_associate",
@@ -150,3 +152,39 @@ class InvestigationApiTests(unittest.TestCase):
         self.assertEqual(self.domain.handoff_calls, 2)
         self.assertEqual(len(self.domain.handoffs), 1)
         self.assertEqual(self.client.get(f"/investigations/{run['run_id']}").json(), run)
+
+    def test_langfuse_groups_start_resume_and_handoff_without_raw_case_content(self):
+        from langfuse import Langfuse
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+        exporter = InMemorySpanExporter()
+        self.langfuse = Langfuse(
+            public_key=f"pk-lf-local-{uuid4()}", secret_key="sk-lf-local-test",
+            tracer_provider=TracerProvider(), span_exporter=exporter, flush_at=1,
+        )
+        self.addCleanup(self.langfuse.shutdown)
+        first = self.client.post("/investigations", json=self.case_body, headers=self.key)
+        self.assertEqual(first.status_code, 201, first.text)
+        self.domain.approval_status = "approved"
+        self.client.post(f"/investigations/{first.json()['run_id']}/resume").raise_for_status()
+        self.domain.require_review = True
+        handoff = self.client.post("/investigations", json=self.case_body)
+        self.assertEqual(handoff.json()["status"], "needs_review")
+
+        self.langfuse.flush()
+        spans = exporter.get_finished_spans()
+        span_names = {span.name for span in spans}
+        self.assertTrue({"workflow.investigate", "workflow.findings", "workflow.approval_pause", "workflow.finalize"}.issubset(span_names))
+        starts = [span for span in spans if span.name == "investigation.start"]
+        (resumed,) = [span for span in spans if span.name == "investigation.resume"]
+        (original,) = [span for span in starts if span.context.trace_id == resumed.context.trace_id]
+        self.assertTrue(any(
+            span.name == "workflow.investigate" and span.parent.span_id == original.context.span_id
+            for span in spans
+        ))
+        self.assertEqual(len({span.context.trace_id for span in starts}), 2)
+        attributes = " ".join(str(dict(span.attributes)) for span in spans)
+        self.assertIn("policy_unavailable", attributes)
+        self.assertNotIn("APT-9002", attributes)
+        self.assertNotIn("rescheduled the delivery appointment", attributes)

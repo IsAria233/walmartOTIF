@@ -3,6 +3,7 @@
 from collections.abc import Iterator
 from contextlib import contextmanager
 from functools import partial
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 import psycopg
@@ -14,6 +15,9 @@ from psycopg_pool import ConnectionPool
 from .api import InvestigationRuntime
 from .domain_investigation import DomainInvestigationClient
 from .investigation import FindCause, FindingAnalysisError, build_investigation_graph
+
+if TYPE_CHECKING:
+    from langfuse import Langfuse
 
 
 def _missing_analyzer(case, plan, evidence):
@@ -33,6 +37,7 @@ def _lock_case(dsn: str, case_id: UUID) -> Iterator[None]:
 @contextmanager
 def open_runtime(
     checkpoint_dsn: str, domain: DomainInvestigationClient, find_cause: FindCause | None,
+    *, langfuse: "Langfuse | None" = None,
 ) -> Iterator[InvestigationRuntime]:
     with ConnectionPool(
         checkpoint_dsn, min_size=1, max_size=4, open=False, timeout=10,
@@ -46,5 +51,5 @@ def open_runtime(
         )
         yield InvestigationRuntime(
             graph=graph, get_case=domain.get_case, lock_case=partial(_lock_case, checkpoint_dsn),
-            model_available=find_cause is not None,
+            model_available=find_cause is not None, langfuse=langfuse,
         )

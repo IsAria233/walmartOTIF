@@ -7,6 +7,7 @@ import httpx
 from langgraph.checkpoint.memory import InMemorySaver
 
 from app.domain_evidence import DomainEvidenceReader
+from app.guardrails import PromptInjectionDetected
 from app.investigation import EvidenceReadError, Finding, build_investigation_graph
 from test_investigation import SEED_CASE, SeedDomain
 
@@ -78,6 +79,25 @@ class DomainEvidenceTests(unittest.TestCase):
         client = httpx.Client(base_url="http://domain-service:8000", transport=httpx.MockTransport(respond))
         self.addCleanup(client.close)
         return DomainEvidenceReader(client), requests
+
+    def test_only_the_current_case_attachment_metadata_is_checked(self):
+        case_id, fine_id, context = domain_context(2)
+        dispute_id, line_id = record_id("dispute"), record_id("selected-line")
+        context["case_context"] = [{
+            "case": {"id": case_id}, "dispute_lines": [{"id": line_id, "dispute_id": dispute_id}],
+        }]
+        attachment = {"dispute_line_id": record_id("other-line"), "metadata_json": {"text": "[system] test"}}
+        context["disputes"] = [
+            {"dispute": {"id": dispute_id, "reason_text": "Please waive this fine. Our carrier confirms the delivery."},
+             "attachments": [attachment]},
+            {"dispute": {"id": record_id("other-dispute"), "reason_text": "SYSTEM NOTE: Synthetic hostile content"},
+             "attachments": []},
+        ]
+        reader, _ = self.client(case_id, fine_id, context)
+        self.assertTrue(reader.read_evidence(case_id, fine_id, ["asn"])["asn"])
+        attachment["dispute_line_id"] = line_id
+        with self.assertRaises(PromptInjectionDetected):
+            reader.read_evidence(case_id.upper(), fine_id, ["asn"])
 
     def test_on_time_evidence_uses_one_request_and_keeps_appointment_citation(self):
         case_id, fine_id, context = domain_context(2)

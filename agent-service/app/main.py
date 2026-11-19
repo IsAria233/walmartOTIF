@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 from .api import router
 from .domain_investigation import DomainInvestigationClient, DomainRequestError
 from .model_finding import open_finding_analyzer
+from .observability import open_langfuse
 from .runtime import open_runtime
 
 
@@ -24,8 +25,9 @@ async def lifespan(app: FastAPI):
             analyzer = None
             if os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY"):
                 analyzer = stack.enter_context(open_finding_analyzer())
+            langfuse = stack.enter_context(open_langfuse())
             app.state.investigations = stack.enter_context(
-                open_runtime(checkpoint_dsn, DomainInvestigationClient(client), analyzer),
+                open_runtime(checkpoint_dsn, DomainInvestigationClient(client), analyzer, langfuse=langfuse),
             )
         try:
             yield
