@@ -6,7 +6,7 @@ from uuid import UUID
 
 import httpx
 
-from .investigation import Evidence, EvidenceReadError, EvidenceSource
+from .investigation import CaseIntake, Evidence, EvidenceReadError, EvidenceSource
 
 
 def _record(row: dict[str, Any], *fields: str, **links: Any) -> Evidence:
@@ -91,9 +91,39 @@ class DomainEvidenceReader:
     def __init__(self, client: httpx.Client):
         self.client = client
 
+    def read_intake(
+        self, case_id: str, fine_record_id: str, *, ships_to_us_dc: bool | None,
+    ) -> CaseIntake:
+        context = self._read_context(case_id, fine_record_id)
+        try:
+            po = context["purchase_order"]
+            line = context["po_line"]
+            fine = context["fine_record"]
+            return {
+                "po_line_id": line["id"],
+                "freight_terms": po["freight_terms"],
+                "channel": po["channel"],
+                "ships_to_us_dc": ships_to_us_dc,
+                "metric": fine["metric"],
+                "mabd": line["mabd"],
+                "standard_transit_days": line["standard_transit_days"],
+                "po_version_used": fine["po_version_used"],
+                "fine_ordered_cases": fine["ordered_cases"],
+                "fine_received_cases": fine["received_cases"],
+            }
+        except (KeyError, TypeError) as exc:
+            raise EvidenceReadError("Domain case metadata response has an invalid shape") from exc
+
     def read_evidence(
         self, case_id: str, fine_record_id: str, sources: list[EvidenceSource]
     ) -> dict[EvidenceSource, list[Evidence]]:
+        context = self._read_context(case_id, fine_record_id)
+        try:
+            return {source: READERS[source](context, context["po_line"]["id"]) for source in sources}
+        except (KeyError, TypeError, ValueError) as exc:
+            raise EvidenceReadError("Domain evidence response has an invalid shape") from exc
+
+    def _read_context(self, case_id: str, fine_record_id: str) -> dict[str, Any]:
         try:
             case_id = str(UUID(case_id))
             fine_record_id = str(UUID(fine_record_id))
@@ -116,6 +146,6 @@ class DomainEvidenceReader:
             fine = context["fine_record"]
             if fine["id"] != fine_record_id or fine["po_line_id"] != po_line_id:
                 raise EvidenceReadError("Domain evidence context does not match the requested fine")
-            return {source: READERS[source](context, po_line_id) for source in sources}
+            return context
         except (KeyError, TypeError, ValueError) as exc:
             raise EvidenceReadError("Domain evidence response has an invalid shape") from exc

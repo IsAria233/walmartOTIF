@@ -17,6 +17,18 @@ graph's plan and preserves delivery IDs for gate and receiving evidence.
 The record IDs are the UUIDs of the source records. The Domain write adapter
 must resolve these to EvidenceRecord UUIDs before submitting a Finding.
 
+## Model findings
+
+Use `open_finding_analyzer()` as a context manager and pass its analyzer to the
+graph as `find_cause`. It loads `LLM_API_KEY` or `OPENAI_API_KEY` from the shell.
+The default `LLM_MODEL` is `gpt-4.1-mini`. The Compose setup passes the project's
+`.env` variables to the Agent service.
+
+`DomainEvidenceReader.read_intake()` projects the MABD, transit days, and fine
+snapshot used by the analyzer. The intake caller supplies the verified U.S. DC
+scope flag. The model receives only planned sources and selected fields.
+LangGraph checks the cause and citations before submitting a Finding.
+
 ## Run the tests
 
 From `agent-service/`, install the service requirements and run the workflow tests.
@@ -24,6 +36,14 @@ From `agent-service/`, install the service requirements and run the workflow tes
 ```bash
 python -m pip install -r requirements.txt
 python -m unittest discover -s tests -v
+```
+
+To invoke OpenAI for the two synthetic seed cases, configure the API key in
+the shell, then run the opt-in live test. This test makes two model requests
+and uses a simulated Domain writer.
+
+```bash
+RUN_OPENAI_EVAL=1 python -m unittest discover -s tests -p 'test_model_finding.py' -v
 ```
 
 Set `AGENT_CHECKPOINT_TEST_DSN` to a disposable PostgreSQL database to also

@@ -2,7 +2,7 @@
 
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from typing import Any, Literal, Protocol, TypedDict
+from typing import Any, Literal, NotRequired, Protocol, TypedDict
 
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -32,6 +32,11 @@ class CaseIntake(TypedDict):
     channel: str | None
     ships_to_us_dc: bool | None
     metric: str | None
+    mabd: NotRequired[str | None]
+    standard_transit_days: NotRequired[int | None]
+    po_version_used: NotRequired[int | None]
+    fine_ordered_cases: NotRequired[int | None]
+    fine_received_cases: NotRequired[int | None]
 
 
 class Evidence(TypedDict):
@@ -87,6 +92,10 @@ class EvidenceReadError(RuntimeError):
     """Domain evidence could not be fetched or verified."""
 
 
+class FindingAnalysisError(RuntimeError):
+    """The model could not produce a complete finding."""
+
+
 class EvidenceReader(Protocol):
     def read_evidence(
         self, case_id: str, fine_record_id: str, sources: list[EvidenceSource]
@@ -120,7 +129,10 @@ def build_investigation_graph(
     def intake(state: InvestigationInput, config: RunnableConfig) -> dict[str, Any]:
         if config.get("configurable", {}).get("thread_id") != state["run_id"]:
             raise ValueError("thread_id must match run_id")
-        case = domain.read_intake(state["case_id"], state["fine_record_id"])
+        try:
+            case = domain.read_intake(state["case_id"], state["fine_record_id"])
+        except EvidenceReadError as exc:
+            return needs_review(str(exc))
         return {"case": case, "status": "investigating"}
 
     def scope_check(state: InvestigationState) -> dict[str, Any]:
@@ -156,6 +168,8 @@ def build_investigation_graph(
     def findings(state: InvestigationState) -> dict[str, Any]:
         try:
             finding = Finding.model_validate(find_cause(state["case"], state["plan"], state["evidence"]))
+        except FindingAnalysisError as exc:
+            return needs_review(str(exc))
         except ValidationError:
             return needs_review("The finding failed structured validation")
 
@@ -215,13 +229,13 @@ def build_investigation_graph(
     graph.add_node("finalize", finalize)
 
     graph.add_edge(START, "intake")
-    graph.add_edge("intake", "scope_check")
     graph.add_edge("plan", "investigate")
     graph.add_edge("submit_finding", "rules_call")
     graph.add_edge("create_outcome", "route")
     graph.add_edge("approval_pause", "route")
     graph.add_edge("finalize", END)
     for origin, next_node in (
+        ("intake", "scope_check"),
         ("scope_check", "plan"), ("investigate", "findings"),
         ("findings", "submit_finding"), ("rules_call", "create_outcome"),
     ):

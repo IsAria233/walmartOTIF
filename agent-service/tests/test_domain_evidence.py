@@ -29,8 +29,12 @@ def domain_context(case_number):
     delivery_id = record_id(f"{case_name}-delivery")
     delivery_line_id = record_id(f"{case_name}-delivery-line")
     context = {
-        "fine_record": {"id": fine_id, "po_line_id": po_line_id},
-        "po_line": {"id": po_line_id},
+        "fine_record": {**seed["fine_record"], "id": fine_id, "po_line_id": po_line_id},
+        "purchase_order": {"freight_terms": seed["po"]["freight_terms"], "channel": seed["po"]["channel"]},
+        "po_line": {
+            "id": po_line_id, "mabd": seed["po"]["mabd"],
+            "standard_transit_days": seed["po"]["standard_transit_days"],
+        },
         "asns": [{
             "asn": {"id": asn_id, "asn_number": seed["asn"]["asn_id"], "ship_ts": seed["asn"]["ship_ts"]},
             "lines": [asn_line],
