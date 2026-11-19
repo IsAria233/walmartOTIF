@@ -142,13 +142,15 @@ def build_graph(domain: DomainClient, llm: LLM):
             return {"handoff_reason": "Outside the POC scope: " + "; ".join(reasons) + "."}
         fine = state["context"]["fine_record"]
         opening = (f"Investigate fine {fine.get('external_fine_id') or fine['id']}, "
-                   f"a {state['metric'].replace('_', '-')} fine on one PO line.")
+                   f"an {state['metric'].replace('_', '-')} fine on one PO line.")
         return {"messages": [{"role": "user", "content": opening}]}
 
     def model(state: State) -> dict:
         # The Anthropic SDK reports the model call itself (model, tokens, cost) as a child generation.
-        with observation(f"model-step-{state['steps'] + 1}", input=plain(state["messages"])) as span:
-            response = llm(SYSTEM_PROMPT, tool_definitions(state["metric"]), state["messages"])
+        offered = tool_definitions(state["metric"])
+        seen = {"system": SYSTEM_PROMPT, "tools": offered, "messages": plain(state["messages"])}
+        with observation(f"model-step-{state['steps'] + 1}", input=seen) as span:
+            response = llm(SYSTEM_PROMPT, offered, state["messages"])
             span.update(output=plain(response.content))
         update: dict = {"steps": state["steps"] + 1,
                         "messages": state["messages"] + [{"role": "assistant", "content": response.content}]}
