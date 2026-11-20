@@ -57,6 +57,14 @@ def create_finding(session: Session, *, case_id: uuid.UUID, payload: dict) -> In
     case = session.execute(select(InvestigationCase).where(InvestigationCase.id == case_id).with_for_update()).scalar_one_or_none()
     if case is None:
         raise NotFound("Investigation Case not found")
+    run_id = payload.get("agent_run_id")
+    if run_id is not None:
+        existing = session.scalar(select(InvestigationFinding).where(
+            InvestigationFinding.investigation_case_id == case_id,
+            InvestigationFinding.agent_run_id == run_id,
+        ).order_by(InvestigationFinding.version_number.desc()).limit(1))
+        if existing is not None:
+            return existing
     if case.status != "investigating":
         raise Conflict("Findings can only be submitted while a Case is investigating")
     version = (session.scalar(select(func.max(InvestigationFinding.version_number)).where(InvestigationFinding.investigation_case_id == case_id)) or 0) + 1

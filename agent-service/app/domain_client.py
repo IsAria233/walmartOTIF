@@ -37,8 +37,28 @@ class DomainClient:
     def submit_finding(self, case_id: str, finding: dict) -> dict:
         return self._call("POST", f"/investigation-cases/{case_id}/findings", finding)
 
+    # reuse_existing: a retried run gets the evaluation and outcome it already created.
     def evaluate(self, case_id: str, finding_id: str) -> dict:
-        return self._call("POST", f"/investigation-cases/{case_id}/evaluate", {"finding_id": finding_id})
+        return self._call("POST", f"/investigation-cases/{case_id}/evaluate",
+                          {"finding_id": finding_id, "reuse_existing": True})
 
     def create_outcome(self, case_id: str, evaluation_id: str) -> dict:
-        return self._call("POST", f"/investigation-cases/{case_id}/outcome", {"evaluation_id": evaluation_id})
+        return self._call("POST", f"/investigation-cases/{case_id}/outcome",
+                          {"evaluation_id": evaluation_id, "reuse_existing": True})
+
+    def record_handoff(self, case_id: str, run_id: str, reason: str, details: dict) -> dict:
+        """Hand the case to a person, keeping what the agent found. Safe to repeat for the same run."""
+        return self._call("PUT", f"/internal/investigation-cases/{case_id}/handoffs/{run_id}",
+                          {"reason": reason, "details": details})
+
+    def approval_status(self, case_id: str, outcome_id: str) -> str:
+        """pending_approval | pending_manager_approval | approved | rejected"""
+        page = 1
+        while True:
+            data = self._call("GET", f"/investigation-cases/{case_id}/outcome?page={page}&page_size=100")
+            for item in data["items"]:
+                if item["outcome"]["id"] == outcome_id:
+                    return item["outcome"]["status"]
+            if page >= data.get("total_pages", 1):
+                raise DomainError(502, f"Outcome {outcome_id} is missing in domain-service")
+            page += 1

@@ -80,6 +80,7 @@ def load_case(session: Session, case: dict) -> str:
     dc = get_or_create(
         session, DistributionCenter, {"dc_code": dc_match.group(1) if dc_match else slug(po_in["dc"])},
         name=po_in["dc"], region=dc_match.group(2) if dc_match else None,
+        country_code="US",  # every seed DC is a Walmart U.S. DC (policy section 1)
     )
     order = get_or_create(
         session, PurchaseOrder, {"po_number": po_in["po_number"]},

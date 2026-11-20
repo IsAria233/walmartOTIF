@@ -12,7 +12,9 @@ from app.services.case_service import transition_case
 from app.services.exceptions import Conflict, InvalidRequest, NotFound
 
 
-def create_outcome(session: Session, *, case_id: uuid.UUID, evaluation_id: uuid.UUID) -> CaseOutcome:
+def create_outcome(
+    session: Session, *, case_id: uuid.UUID, evaluation_id: uuid.UUID, reuse_existing: bool = False,
+) -> CaseOutcome:
     case = session.execute(select(InvestigationCase).where(InvestigationCase.id == case_id).with_for_update()).scalar_one_or_none()
     if case is None:
         raise NotFound("Investigation Case not found")
@@ -21,9 +23,12 @@ def create_outcome(session: Session, *, case_id: uuid.UUID, evaluation_id: uuid.
         raise NotFound("Evaluation not found")
     if evaluation.investigation_case_id != case_id:
         raise InvalidRequest("Evaluation belongs to a different Case")
+    existing = session.scalar(select(CaseOutcome).where(CaseOutcome.evaluation_id == evaluation_id))
+    if existing is not None and reuse_existing:
+        return existing
     if case.status != "findings_submitted":
         raise Conflict("Case is not ready for an Outcome")
-    if session.scalar(select(CaseOutcome.id).where(CaseOutcome.evaluation_id == evaluation_id)):
+    if existing is not None:
         raise Conflict("This Evaluation already has an Outcome")
     outcome = CaseOutcome(investigation_case_id=case_id, evaluation_id=evaluation_id, status="pending_approval")
     session.add(outcome)

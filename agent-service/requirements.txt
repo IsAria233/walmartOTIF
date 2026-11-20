@@ -5,3 +5,6 @@ pydantic
 langgraph
 anthropic
 langfuse
+pyjwt
+langgraph-checkpoint-postgres
+psycopg[binary,pool]

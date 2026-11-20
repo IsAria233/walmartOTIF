@@ -15,9 +15,9 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.schemas import (
-    ASNPageResponse, ASNResponse, ApprovalDecisionRequest, ApprovalDecisionResponse,
-    ApprovalPageResponse, AppointmentPageResponse, CaseCreateRequest,
-    CaseQueueResponse, CaseResponse, CaseStatusRequest, DeliveryResponse,
+    ASNPageResponse, ASNResponse, AgentHandoffRequest, ApprovalDecisionRequest, ApprovalDecisionResponse,
+    ApprovalPageResponse, AppointmentPageResponse, CaseCreateRequest, CaseDetailResponse,
+    CaseQueueResponse, CaseResponse, CaseStatusEventResponse, CaseStatusRequest, DeliveryResponse,
     DisputeCreateRequest, DisputeDetailResponse, DisputePageResponse,
     EvaluationCreateRequest, EvaluationPageResponse, EvaluationResponse,
     FindingCreateRequest, FindingPageResponse, FindingResponse, FinePageResponse,
@@ -42,6 +42,7 @@ from app.services import (
     get_context, get_or_create_active_case, list_cases, run_scan,
     submit_dispute, transition_case,
 )
+from app.services.case_service import current_handoff, record_agent_handoff
 from app.services.exceptions import DomainError
 
 router = APIRouter(prefix="/api/v1")
@@ -126,12 +127,12 @@ def create_case(payload: CaseCreateRequest, response: Response, db: Session = De
     return case
 
 
-@router.get("/investigation-cases/{case_id}", response_model=CaseResponse)
+@router.get("/investigation-cases/{case_id}", response_model=CaseDetailResponse)
 def get_case(case_id: uuid.UUID, db: Session = Depends(get_db)):
     case = db.get(InvestigationCase, case_id)
     if case is None:
         raise NotFound("Investigation Case not found")
-    return case
+    return {**serialize(case), "handoff": current_handoff(db, case)}
 
 
 @router.patch("/investigation-cases/{case_id}/status", response_model=CaseResponse)
@@ -139,6 +140,17 @@ def patch_case_status(case_id: uuid.UUID, payload: CaseStatusRequest, db: Sessio
     with db.begin():
         case = transition_case(db, case_id=case_id, target=payload.status, reason=payload.reason)
     return case
+
+
+# Service-to-service only: the gateway does not route /internal paths.
+@router.put("/internal/investigation-cases/{case_id}/handoffs/{run_id}", response_model=CaseStatusEventResponse)
+def put_agent_handoff(case_id: uuid.UUID, run_id: uuid.UUID, payload: AgentHandoffRequest, db: Session = Depends(get_db)):
+    with db.begin():
+        event = record_agent_handoff(
+            db, case_id=case_id, run_id=run_id, reason=payload.reason,
+            details=payload.details.model_dump(mode="json"),
+        )
+    return event
 
 
 @router.post("/disputes", response_model=DisputeDetailResponse, status_code=201)
@@ -192,7 +204,7 @@ def get_finding(finding_id: uuid.UUID, db: Session = Depends(get_db)):
 @router.post("/investigation-cases/{case_id}/evaluate", response_model=EvaluationResponse, status_code=201)
 def post_evaluation(case_id: uuid.UUID, payload: EvaluationCreateRequest, db: Session = Depends(get_db)):
     with db.begin():
-        evaluation = create_evaluation(db, case_id=case_id, finding_id=payload.finding_id)
+        evaluation = create_evaluation(db, case_id=case_id, **payload.model_dump())
     return evaluation
 
 
@@ -217,7 +229,7 @@ def get_evaluation(evaluation_id: uuid.UUID, db: Session = Depends(get_db)):
 @router.post("/investigation-cases/{case_id}/outcome", response_model=OutcomeDetailResponse, status_code=201)
 def post_outcome(case_id: uuid.UUID, payload: OutcomeCreateRequest, db: Session = Depends(get_db)):
     with db.begin():
-        outcome = create_outcome(db, case_id=case_id, evaluation_id=payload.evaluation_id)
+        outcome = create_outcome(db, case_id=case_id, **payload.model_dump())
         lines = db.execute(select(LineOutcome).where(LineOutcome.case_outcome_id == outcome.id)).scalars().all()
         result = {"id": outcome.id, "investigation_case_id": outcome.investigation_case_id,
                   "evaluation_id": outcome.evaluation_id, "status": outcome.status,

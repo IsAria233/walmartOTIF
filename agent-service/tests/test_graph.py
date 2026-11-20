@@ -2,17 +2,21 @@
 from pathlib import Path
 from types import SimpleNamespace
 
-from app.graph import investigate
+from app.graph import Investigator
 
 FINE, CASE = "fine-1", "case-1"
 
 
-def context(metric="on_time", freight="prepaid"):
+def investigate(case_id, domain, llm):
+    return Investigator(domain, llm).start(case_id)
+
+
+def context(metric="on_time", freight="prepaid", country="US"):
     return {
         "fine_record": {"id": FINE, "external_fine_id": "FINE-1", "metric": metric, "original_amount": "576.00",
                         "case_cost_snapshot": "24.0", "system_accountability": "supplier"},
         "purchase_order": {"po_number": "1", "freight_terms": freight, "channel": "stores"},
-        "supplier": {"name": "S"}, "distribution_center": {"dc_code": "7012"},
+        "supplier": {"name": "S"}, "distribution_center": {"dc_code": "7012", "country_code": country},
         "po_line": {"id": "line-1", "mabd": "2026-10-08", "standard_transit_days": 2, "case_cost": "24.0"},
         "po_line_versions": [{"id": "ver-1", "version_number": 1, "ordered_cases": 800}],
         "asns": [{"asn": {"id": "asn-1", "ship_ts": "2026-10-08T09:10:00Z"}, "lines": [{"id": "asnl-1", "shipped_cases": 800}]}],
@@ -26,6 +30,7 @@ def context(metric="on_time", freight="prepaid"):
 class FakeDomain:
     def __init__(self, ctx):
         self.ctx, self.status, self.calls, self.finding = ctx, "pending", [], None
+        self.handoff, self.approval = None, "pending_approval"
 
     def get_case(self, case_id):
         return {"id": case_id, "fine_record_id": FINE, "status": self.status}
@@ -46,6 +51,12 @@ class FakeDomain:
 
     def create_outcome(self, case_id, evaluation_id):
         return {"id": "outcome-1", "line_outcomes": [{"id": "lo-1"}]}
+
+    def record_handoff(self, case_id, run_id, reason, details):
+        self.status, self.handoff = "handed_off", {"run_id": run_id, "reason": reason, "details": details}
+
+    def approval_status(self, case_id, outcome_id):
+        return self.approval
 
 
 def turn(*calls):
@@ -124,14 +135,66 @@ def test_handoff_and_low_confidence_do_not_reach_the_rules_engine():
         result = investigate(CASE, domain, scripted(turn(("get_asn", {}), ("submit_findings", submitted))))
         assert result["status"] == "handed_off"
         assert domain.finding is None
+        # The person who picks the case up gets what the agent found, not only the reason.
+        assert domain.handoff["run_id"] == result["run_id"]
+        assert domain.handoff["details"]["findings"]["summary"] == submitted["summary"]
+        assert domain.handoff["details"]["tools_called"] == ["get_asn"]
 
 
 def test_out_of_scope_po_is_handed_off_without_calling_the_model():
-    domain = FakeDomain(context(freight="collect"))
-    result = investigate(CASE, domain, scripted())
+    for ctx, expected in ((context(freight="collect"), "collect"), (context(country="MX"), "MX"),
+                          (context(country=None), "not recorded")):
+        domain = FakeDomain(ctx)
+        result = investigate(CASE, domain, scripted())
+        assert result["status"] == "handed_off"
+        assert result["model_steps"] == 0
+        assert expected in result["handoff_reason"]
+
+
+def test_run_pauses_for_approval_and_resumes_through_both_approvers():
+    domain = FakeDomain(context())
+    agent = Investigator(domain, scripted(turn(("get_asn", {}), ("submit_findings", findings()))))
+    run = agent.start(CASE)
+    assert (run["status"], run["paused_for_approval"]) == ("awaiting_approval", True)
+
+    # Resuming before anyone has decided changes nothing.
+    assert agent.resume(run["run_id"])["paused_for_approval"] is True
+    # The associate approves a reversal above the threshold: the manager is next, so the run pauses again.
+    domain.approval = "pending_manager_approval"
+    waiting = agent.resume(run["run_id"])
+    assert (waiting["approval_status"], waiting["paused_for_approval"]) == ("pending_manager_approval", True)
+
+    domain.approval = "approved"
+    done = agent.resume(run["run_id"])
+    assert (done["status"], done["paused_for_approval"]) == ("approved", False)
+    assert agent.read(run["run_id"]) == done
+
+
+def test_a_finding_the_rules_cannot_evaluate_is_handed_off_with_the_finding_attached():
+    from app.domain_client import DomainError
+
+    domain = FakeDomain(context())
+    domain.evaluate = lambda *_: (_ for _ in ()).throw(DomainError(409, "policy_unavailable"))
+    result = investigate(CASE, domain, scripted(turn(("get_asn", {}), ("submit_findings", findings()))))
     assert result["status"] == "handed_off"
-    assert result["model_steps"] == 0
-    assert "collect" in result["handoff_reason"]
+    assert domain.handoff["details"]["finding_id"] == "finding-1"
+
+
+def test_a_failed_run_continues_from_its_last_checkpoint_without_calling_the_model_again():
+    domain = FakeDomain(context())
+    llm = scripted(turn(("get_asn", {}), ("submit_findings", findings())))
+    agent = Investigator(domain, llm)
+    working, domain.evaluate = domain.evaluate, lambda *_: (_ for _ in ()).throw(RuntimeError("domain is down"))
+    try:
+        agent.start(CASE, "run-1")
+    except RuntimeError:
+        pass
+    assert agent.read("run-1")["unfinished"] is True
+
+    domain.evaluate = working
+    retried = agent.start(CASE, "run-1")
+    assert retried["status"] == "awaiting_approval"
+    assert len(llm.seen) == 1
 
 
 def test_injected_instructions_are_reported_and_the_finding_is_still_stored():
