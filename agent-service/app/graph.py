@@ -1,10 +1,15 @@
 """LangGraph investigation of one PO line.
 
-intake -> scope check (code) -> model <-> tools (step limit) -> submit | handoff
+intake -> scope check (code) -> model <-> tools (step limit) -> submit -> approval pause
+                                                               `-> handoff
 
 The model establishes what happened and which cause the records support. It
 never outputs accountability or amounts: after a finding is stored, the rules
-engine in domain-service computes those, and a person approves.
+engine in domain-service computes those, and a person approves. The run pauses
+while approval is pending and is resumed once a person has decided.
+
+Every step is checkpointed under the run id, so a run survives a restart and a
+repeated request continues it instead of starting again.
 """
 from __future__ import annotations
 
@@ -14,14 +19,18 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable, TypedDict
 
+from langgraph.checkpoint.base import BaseCheckpointSaver
+from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
+from langgraph.types import Command, interrupt
 
 from app.domain_client import DomainClient, DomainError
-from app.tracing import investigation_trace, observation, plain
+from app.tracing import investigation_trace, observation, plain, trace_id_for
 from app.tools import CAUSES_BY_METRIC, SUBMIT_TOOL, record_keys, run_tool, tool_definitions
 
 MODEL = os.getenv("AGENT_MODEL", "claude-haiku-5-5")
 MAX_MODEL_STEPS = int(os.getenv("AGENT_MAX_STEPS", "8"))
+APPROVAL_PENDING = {"pending_approval", "pending_manager_approval"}
 POLICY = (Path(__file__).parent / "policy" / "otif_policy.md").read_text()
 
 SYSTEM_PROMPT = f"""You are an investigator for Walmart's OTIF (On-Time In-Full) dispute team. You review one questionable OTIF fine on one PO line and establish what actually caused the miss. You do not decide accountability or the fine amount; a separate rules system does that from your findings, and a person approves the result.
@@ -69,6 +78,7 @@ class State(TypedDict, total=False):
     findings: dict | None
     handoff_reason: str | None
     status: str
+    approval_status: str
     domain: dict
 
 
@@ -120,7 +130,7 @@ def to_domain_finding(findings: dict, run_id: str) -> dict:
     }
 
 
-def build_graph(domain: DomainClient, llm: LLM):
+def build_graph(domain: DomainClient, llm: LLM, checkpointer: BaseCheckpointSaver):
     def intake(state: State) -> dict:
         case = domain.get_case(state["case_id"])
         if case["status"] != "investigating":
@@ -136,10 +146,15 @@ def build_graph(domain: DomainClient, llm: LLM):
             reasons.append(f"freight terms are {po.get('freight_terms')}, not prepaid")
         if po.get("channel") != "stores":
             reasons.append(f"channel is {po.get('channel')}, not stores")
+        country = (state["context"].get("distribution_center") or {}).get("country_code")
+        if not country:
+            reasons.append("the DC's country is not recorded, so U.S. delivery cannot be confirmed")
+        elif country.upper() != "US":
+            reasons.append(f"the DC is in {country}, not the U.S.")
         if state["metric"] not in CAUSES_BY_METRIC:
             reasons.append(f"fine type {state['metric']} is not on-time or in-full")
         if reasons:
-            return {"handoff_reason": "Outside the POC scope: " + "; ".join(reasons) + "."}
+            return {"handoff_reason": "Not confirmed in the POC scope: " + "; ".join(reasons) + "."}
         fine = state["context"]["fine_record"]
         opening = (f"Investigate fine {fine.get('external_fine_id') or fine['id']}, "
                    f"an {state['metric'].replace('_', '-')} fine on one PO line.")
@@ -148,12 +163,14 @@ def build_graph(domain: DomainClient, llm: LLM):
     def model(state: State) -> dict:
         # The Anthropic SDK reports the model call itself (model, tokens, cost) as a child generation.
         offered = tool_definitions(state["metric"])
-        seen = {"system": SYSTEM_PROMPT, "tools": offered, "messages": plain(state["messages"])}
+        seen = {"system": SYSTEM_PROMPT, "tools": offered, "messages": state["messages"]}
         with observation(f"model-step-{state['steps'] + 1}", input=seen) as span:
             response = llm(SYSTEM_PROMPT, offered, state["messages"])
-            span.update(output=plain(response.content))
+            # Plain data, every block kept as returned: the checkpointer stores it and the next call replays it.
+            content = plain(response.content)
+            span.update(output=content)
         update: dict = {"steps": state["steps"] + 1,
-                        "messages": state["messages"] + [{"role": "assistant", "content": response.content}]}
+                        "messages": state["messages"] + [{"role": "assistant", "content": content}]}
         if response.stop_reason != "tool_use":
             update["handoff_reason"] = f"The model stopped without submitting findings ({response.stop_reason})."
         return update
@@ -161,35 +178,36 @@ def build_graph(domain: DomainClient, llm: LLM):
     def tools(state: State) -> dict:
         fetched, log = set(state["fetched"]), list(state["tool_log"])
         results, findings, rejections = [], None, state["rejections"]
-        calls = [block for block in state["messages"][-1]["content"] if block.type == "tool_use"]
+        calls = [block for block in state["messages"][-1]["content"] if block["type"] == "tool_use"]
         # Read tools run first, so findings submitted in the same turn can cite them.
-        for block in sorted(calls, key=lambda b: b.name == SUBMIT_TOOL):
-            if block.name == SUBMIT_TOOL:
-                with observation(SUBMIT_TOOL, as_type="guardrail", input=plain(block.input)) as check:
-                    problems = validate_findings(block.input, state["metric"], fetched)
+        for block in sorted(calls, key=lambda b: b["name"] == SUBMIT_TOOL):
+            name, call_id = block["name"], block["id"]
+            if name == SUBMIT_TOOL:
+                with observation(SUBMIT_TOOL, as_type="guardrail", input=block["input"]) as check:
+                    problems = validate_findings(block["input"], state["metric"], fetched)
                     check.update(output={"accepted": not problems, "problems": problems})
                 log.append({"tool": SUBMIT_TOOL, "accepted": not problems, "problems": problems})
                 if problems:
                     rejections += 1
-                    results.append({"type": "tool_result", "tool_use_id": block.id, "is_error": True,
+                    results.append({"type": "tool_result", "tool_use_id": call_id, "is_error": True,
                                     "content": "Findings rejected:\n- " + "\n- ".join(problems)})
                 else:
-                    findings = block.input
-                    results.append({"type": "tool_result", "tool_use_id": block.id, "content": "Findings accepted."})
+                    findings = block["input"]
+                    results.append({"type": "tool_result", "tool_use_id": call_id, "content": "Findings accepted."})
                 continue
             try:
-                with observation(block.name, as_type="tool") as span:
-                    payload = run_tool(block.name, state["metric"], state["context"])
+                with observation(name, as_type="tool") as span:
+                    payload = run_tool(name, state["metric"], state["context"])
                     span.update(output=payload)
             except KeyError as exc:
-                log.append({"tool": block.name, "error": str(exc)})
-                results.append({"type": "tool_result", "tool_use_id": block.id, "is_error": True, "content": str(exc)})
+                log.append({"tool": name, "error": str(exc)})
+                results.append({"type": "tool_result", "tool_use_id": call_id, "is_error": True, "content": str(exc)})
                 continue
             fetched |= record_keys(payload)
-            log.append({"tool": block.name})
-            results.append({"type": "tool_result", "tool_use_id": block.id, "content": json.dumps(payload)})
+            log.append({"tool": name})
+            results.append({"type": "tool_result", "tool_use_id": call_id, "content": json.dumps(payload)})
         by_id = {r["tool_use_id"]: r for r in results}
-        ordered = [by_id[block.id] for block in calls]
+        ordered = [by_id[block["id"]] for block in calls]
         update: dict = {"messages": state["messages"] + [{"role": "user", "content": ordered}],
                         "fetched": sorted(fetched), "tool_log": log, "findings": findings, "rejections": rejections}
         if findings is None and state["steps"] >= MAX_MODEL_STEPS:
@@ -209,23 +227,42 @@ def build_graph(domain: DomainClient, llm: LLM):
             evaluation = domain.evaluate(case_id, finding["id"])
             outcome = domain.create_outcome(case_id, evaluation["id"])
         except DomainError as exc:
-            return {"status": "findings_submitted", "domain": {"finding_id": finding["id"], "rules_error": str(exc)}}
+            if exc.status_code != 409:
+                raise  # domain-service is failing; the run stays unfinished and a retry continues from here
+            # The rules cannot price this finding (policy unavailable): a person takes it, finding attached.
+            reason = f"The rules engine could not evaluate the finding. {exc}"
+            return {**handoff({**state, "handoff_reason": reason}, finding_id=finding["id"]),
+                    "domain": {"finding_id": finding["id"]}}
         return {"status": "awaiting_approval", "domain": {
             "finding_id": finding["id"], "evaluation_id": evaluation["id"], "outcome_id": outcome["id"],
             "line_outcome_ids": [line["id"] for line in outcome["line_outcomes"]],
         }}
 
-    def handoff(state: State) -> dict:
+    def handoff(state: State, finding_id: str | None = None) -> dict:
         reason = state.get("handoff_reason") or "The agent could not reach a finding."
-        domain.set_status(state["case_id"], "handed_off", reason)
+        # The reviewer gets the agent's findings so far, not only the reason.
+        domain.record_handoff(state["case_id"], state["run_id"], reason, {
+            "finding_id": finding_id,
+            "findings": state.get("findings"),
+            "tools_called": [entry["tool"] for entry in state.get("tool_log", []) if entry["tool"] != SUBMIT_TOOL],
+        })
         return {"status": "handed_off", "handoff_reason": reason}
+
+    def approval(state: State) -> dict:
+        case_id, outcome_id = state["case_id"], state["domain"]["outcome_id"]
+        status = domain.approval_status(case_id, outcome_id)
+        if status in APPROVAL_PENDING:
+            # Pause here. A resume re-runs this node; the status is read again because a person has acted.
+            interrupt({"case_id": case_id, "outcome_id": outcome_id, "approval_status": status})
+            status = domain.approval_status(case_id, outcome_id)
+        return {"approval_status": status, "status": "awaiting_approval" if status in APPROVAL_PENDING else status}
 
     def after(node_then: str):
         return lambda state: "handoff" if state.get("handoff_reason") else node_then
 
     graph = StateGraph(State)
     for name, fn in [("intake", intake), ("scope_check", scope_check), ("model", model),
-                     ("tools", tools), ("submit", submit), ("handoff", handoff)]:
+                     ("tools", tools), ("submit", submit), ("handoff", handoff), ("approval", approval)]:
         graph.add_node(name, fn)
     graph.add_edge(START, "intake")
     graph.add_edge("intake", "scope_check")
@@ -236,34 +273,77 @@ def build_graph(domain: DomainClient, llm: LLM):
         lambda s: "handoff" if s.get("handoff_reason") else ("submit" if s.get("findings") else "model"),
         ["model", "submit", "handoff"],
     )
-    graph.add_edge("submit", END)
+    graph.add_conditional_edges(
+        "submit", lambda s: "approval" if s.get("status") == "awaiting_approval" else END, ["approval", END],
+    )
+    # One approval can leave another pending (associate, then manager above $500): pause again.
+    graph.add_conditional_edges(
+        "approval", lambda s: "approval" if s["approval_status"] in APPROVAL_PENDING else END, ["approval", END],
+    )
     graph.add_edge("handoff", END)
-    return graph.compile()
+    return graph.compile(checkpointer=checkpointer)
 
 
-def investigate(case_id: str, domain: DomainClient, llm: LLM) -> dict:
-    run_id = str(uuid.uuid4())
-    with investigation_trace(case_id, run_id) as (root, trace_id):
-        final = build_graph(domain, llm).invoke(
-            {"case_id": case_id, "run_id": run_id}, {"recursion_limit": 4 * MAX_MODEL_STEPS + 10},
-        )
-        fine = (final.get("context") or {}).get("fine_record", {})
-        findings = final.get("findings") or {}
-        root.update(
-            output={"status": final["status"], "cause": findings.get("cause"),
-                    "confidence": findings.get("confidence"), "handoff_reason": final.get("handoff_reason")},
-            metadata={"fine": fine.get("external_fine_id"), "fine_record_id": fine.get("id"),
-                      "po_line_id": fine.get("po_line_id"), "fine_type": final.get("metric")},
-        )
-    return {
-        "run_id": run_id,
-        "trace_id": trace_id,
-        "case_id": case_id,
-        "status": final["status"],
-        "fine_type": final.get("metric"),
-        "findings": final.get("findings"),
-        "handoff_reason": final.get("handoff_reason"),
-        "domain": final.get("domain"),
-        "model_steps": final.get("steps", 0),
-        "tool_log": final.get("tool_log", []),
-    }
+class Investigator:
+    """Starts, resumes and reads investigation runs. One run is one checkpoint thread."""
+
+    def __init__(self, domain: DomainClient, llm: LLM, checkpointer: BaseCheckpointSaver | None = None):
+        self.graph = build_graph(domain, llm, checkpointer or InMemorySaver())
+
+    @staticmethod
+    def _config(run_id: str) -> dict:
+        return {"configurable": {"thread_id": run_id}, "recursion_limit": 4 * MAX_MODEL_STEPS + 20}
+
+    def read(self, run_id: str) -> dict | None:
+        snapshot = self.graph.get_state(self._config(run_id))
+        values = snapshot.values
+        if "run_id" not in values:
+            return None
+        return {
+            "run_id": run_id,
+            "trace_id": trace_id_for(run_id),
+            "case_id": values["case_id"],
+            "status": values.get("status", "investigating"),
+            "approval_status": values.get("approval_status"),
+            "paused_for_approval": bool(snapshot.interrupts),
+            "unfinished": bool(snapshot.next) and not snapshot.interrupts,
+            "fine_type": values.get("metric"),
+            "findings": values.get("findings"),
+            "handoff_reason": values.get("handoff_reason"),
+            "domain": values.get("domain"),
+            "model_steps": values.get("steps", 0),
+            "tool_log": values.get("tool_log", []),
+        }
+
+    def start(self, case_id: str, run_id: str | None = None) -> dict:
+        """Run until the case is handed off or waits for approval. A known run_id continues that run."""
+        run_id = run_id or str(uuid.uuid4())
+        existing = self.read(run_id)
+        if existing is None:
+            return self._run(case_id, run_id, "start", {"case_id": case_id, "run_id": run_id})
+        if existing["unfinished"]:  # an earlier request failed part-way; continue from the last checkpoint
+            return self._run(case_id, run_id, "retry", None)
+        return existing
+
+    def resume(self, run_id: str) -> dict | None:
+        """Continue a run that paused for approval. Anything else is returned as it stands."""
+        existing = self.read(run_id)
+        if existing is None or not existing["paused_for_approval"]:
+            return existing
+        return self._run(existing["case_id"], run_id, "resume", Command(resume=True))
+
+    def _run(self, case_id: str, run_id: str, phase: str, graph_input) -> dict:
+        with investigation_trace(case_id, run_id, phase) as root:
+            self.graph.invoke(graph_input, self._config(run_id), durability="sync")
+            result = self.read(run_id)
+            snapshot = self.graph.get_state(self._config(run_id))
+            fine = (snapshot.values.get("context") or {}).get("fine_record", {})
+            findings = result["findings"] or {}
+            root.update(
+                output={"status": result["status"], "approval_status": result["approval_status"],
+                        "cause": findings.get("cause"), "confidence": findings.get("confidence"),
+                        "handoff_reason": result["handoff_reason"]},
+                metadata={"fine": fine.get("external_fine_id"), "fine_record_id": fine.get("id"),
+                          "po_line_id": fine.get("po_line_id"), "fine_type": result["fine_type"]},
+            )
+        return result

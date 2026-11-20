@@ -42,11 +42,20 @@ def observation(name: str, as_type: str = "span", **kwargs):
         yield current
 
 
-@contextmanager
-def investigation_trace(case_id: str, run_id: str):
-    """Root of the trace. Yields (observation, trace_id); trace_id is None when tracing is off."""
+def trace_id_for(run_id: str) -> str | None:
+    """The trace of a run, derived from its id so every request for the run lands in one trace."""
     if not enabled():
-        yield _Noop(), None
+        return None
+    from langfuse import get_client
+
+    return get_client().create_trace_id(seed=run_id)
+
+
+@contextmanager
+def investigation_trace(case_id: str, run_id: str, phase: str = "start"):
+    """One request's part of a run's trace: start, retry, or resume after approval."""
+    if not enabled():
+        yield _Noop()
         return
     from langfuse import get_client, propagate_attributes
 
@@ -54,8 +63,10 @@ def investigation_trace(case_id: str, run_id: str):
     try:
         with propagate_attributes(trace_name="otif-investigation", session_id=case_id,
                                   tags=["otif", f"case:{case_id}"], metadata={"run_id": run_id}):
-            with client.start_as_current_observation(name="otif-investigation", as_type="agent",
-                                                     input={"case_id": case_id}) as root:
-                yield root, client.get_current_trace_id()
+            with client.start_as_current_observation(
+                trace_context={"trace_id": trace_id_for(run_id)}, name=f"investigation.{phase}",
+                as_type="agent", input={"case_id": case_id, "run_id": run_id},
+            ) as root:
+                yield root
     finally:
         client.flush()

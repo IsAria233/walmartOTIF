@@ -35,7 +35,13 @@ services:
     env_file: .env
     environment:
       DOMAIN_SERVICE_URL: http://domain-service:8000
-    depends_on: [domain-service]
+      # Investigation runs are checkpointed here, so they survive a restart and can resume after approval.
+      AGENT_CHECKPOINT_DSN: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+    depends_on:
+      db:
+        condition: service_healthy
+      domain-service:
+        condition: service_started
 
   gateway:
     build: ./gateway

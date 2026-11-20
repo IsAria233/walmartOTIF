@@ -48,9 +48,24 @@ work queue, the agent's investigation, the rules engine result, then approval.
       python -m scripts.load_seed_cases /data/seed_cases/seed_cases.json
     uv run --with httpx python scripts/e2e_slice.py --fine FINE-1001 --gateway http://localhost:8080
 
-A case can be investigated once. To start again, `docker compose down -v` and
-repeat the steps above. Outside Docker, `scripts/reset_local_db.sh` wipes and
+A closed case cannot be investigated again. To start over, `docker compose down -v`
+and repeat the steps above. Outside Docker, `scripts/reset_local_db.sh` wipes and
 reloads the database named by `DATABASE_URL`.
+
+### Agent API
+
+All three calls need `Authorization: Bearer <token>` from any signed-in internal user.
+
+| Call | What it does |
+| --- | --- |
+| `POST /api/agent/investigations` `{"case_id": ...}` | Investigates the case until it is handed off or waits for approval. With an `Idempotency-Key` header (a UUID), repeating the request returns the same run and continues it if an earlier attempt failed part-way. |
+| `GET /api/agent/investigations/{run_id}` | The run: status, findings, tool log, LangFuse trace id. |
+| `POST /api/agent/investigations/{run_id}/resume` | Call after an approval decision. The run reads the result and finishes (`approved` / `rejected`), or pauses again for the manager. |
+
+Runs are checkpointed in Postgres (`AGENT_CHECKPOINT_DSN`, set in `docker-compose.yml`),
+so they survive a restart. Without it they are kept in memory. A handoff is recorded
+on the case with the agent's findings: `GET /api/domain/v1/investigation-cases/{id}`
+returns it as `handoff`.
 
 ## Working agreement
 

@@ -261,7 +261,7 @@ def test_all_registered_api_operations_have_explicit_openapi_response_contracts(
     # FastAPI versions may keep include_router as a lazy router entry in
     # app.routes; inspect the actual registered APIRoute objects directly.
     operations = router.routes
-    assert len(operations) == 32
+    assert len(operations) == 33
     assert all(route.response_model is not None for route in operations)
     document = app.openapi()
     openapi_operations = [
@@ -270,5 +270,5 @@ def test_all_registered_api_operations_have_explicit_openapi_response_contracts(
         for method, operation in path_item.items()
         if method in {"get", "post", "patch", "put", "delete"}
     ]
-    assert len(openapi_operations) == 32
+    assert len(openapi_operations) == 33
     assert all("200" in operation["responses"] or "201" in operation["responses"] for _, _, operation in openapi_operations)

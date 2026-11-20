@@ -1,5 +1,7 @@
 """Thin end-to-end slice (SCRUM-54): one fine from login to approval through every service.
 
+The agent run pauses when approval is pending and is resumed after each decision.
+
     uv run --with httpx python scripts/e2e_slice.py --fine FINE-1001
     uv run --with httpx python scripts/e2e_slice.py --fine FINE-1001 --gateway http://localhost:8080
 
@@ -57,11 +59,14 @@ print(f"   {len(queue)} cases in the queue; picked {args.fine}: {fine['metric']}
       f"${fine['original_amount']}, case status {case['status']}, origin {case['origin']}")
 
 step("3. Investigation (agent-service)")
-run = call("POST", f"{AGENT}/investigations", json={"case_id": case["id"]})
-print(f"   status: {run['status']}   model steps: {run['model_steps']}")
+run = call("POST", f"{AGENT}/investigations", associate, json={"case_id": case["id"]})
+print(f"   status: {run['status']}   model steps: {run['model_steps']}   run: {run['run_id']}")
 print("   tools:  " + ", ".join(entry["tool"] for entry in run["tool_log"]))
 if run["status"] != "awaiting_approval":
-    sys.exit(f"   stopped: {run.get('handoff_reason') or json.dumps(run.get('domain'))}")
+    handoff = call("GET", f"{DOMAIN}/investigation-cases/{case['id']}").get("handoff") or {}
+    print(f"   handed off: {run.get('handoff_reason') or json.dumps(run.get('domain'))}")
+    sys.exit(f"   recorded on the case: {'yes' if handoff.get('agent_run_id') == run['run_id'] else 'NO'}")
+print(f"   paused for approval: {run['paused_for_approval']}")
 found = run["findings"]
 print(f"   cause: {found['cause']} ({found['confidence']} confidence)")
 print(f"   summary: {found['summary']}")
@@ -83,13 +88,15 @@ print(f"   accountable: {line['accountable_party']}   proposal: {line['outcome']
 step("5. Approval (domain-service, JWT from auth-service)")
 decision = {"line_outcome_id": line["id"], "stage": "associate", "decision": "approved", "comment": "e2e slice"}
 call("POST", f"{DOMAIN}/outcomes/{outcome_id}/approvals", associate, json=decision)
-print("   associate approved")
+run = call("POST", f"{AGENT}/investigations/{run['run_id']}/resume", associate)
+print(f"   associate approved; agent run resumed -> {run['status']} ({run['approval_status']})")
 approvals = call("GET", f"{DOMAIN}/outcomes/{outcome_id}/approvals")["items"]
 if any(a["approval"]["approval_type"] == "manager" and a["approval"]["status"] == "pending" for a in approvals):
     manager = login("demo_manager")
     call("POST", f"{DOMAIN}/outcomes/{outcome_id}/approvals", manager, json={**decision, "stage": "manager"})
-    print("   manager approved (reversal above the threshold)")
+    run = call("POST", f"{AGENT}/investigations/{run['run_id']}/resume", manager)
+    print(f"   manager approved (reversal above the threshold); agent run resumed -> {run['status']}")
 
 final = call("GET", f"{DOMAIN}/investigation-cases/{case['id']}")["status"]
-print(f"\nCase status: {final}")
-sys.exit(0 if final == "closed" else 1)
+print(f"\nCase status: {final}   agent run: {run['status']}")
+sys.exit(0 if final == "closed" and run["status"] == "approved" else 1)

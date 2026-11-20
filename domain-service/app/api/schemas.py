@@ -6,7 +6,7 @@ from decimal import Decimal
 from typing import Annotated, Any, Generic, Literal, TypeVar
 from uuid import UUID
 
-from pydantic import AwareDatetime, BeforeValidator, BaseModel, ConfigDict, Field
+from pydantic import AwareDatetime, BeforeValidator, BaseModel, ConfigDict, Field, StringConstraints
 
 
 class ORMModel(BaseModel):
@@ -128,6 +128,7 @@ class FindingResponse(BaseModel):
 
 class EvaluationCreateRequest(BaseModel):
     finding_id: UUID
+    reuse_existing: bool = False
 
 
 class EvaluationResponse(BaseModel):
@@ -144,6 +145,7 @@ class EvaluationResponse(BaseModel):
 
 class OutcomeCreateRequest(BaseModel):
     evaluation_id: UUID
+    reuse_existing: bool = False
 
 
 class OutcomeResponse(BaseModel):
@@ -221,6 +223,7 @@ class DistributionCenterResponse(ORMModel):
     city: str | None = None
     state: str | None = None
     postal_code: str | None = None
+    country_code: str | None = None
     created_at: AwareUTCDateTime
 
 class PurchaseOrderResponse(ORMModel):
@@ -363,6 +366,18 @@ class AttachmentResponse(ORMModel):
     metadata_json: dict[str, Any] | None = None
     created_at: AwareUTCDateTime
 
+class HandoffDetails(BaseModel):
+    """What the agent leaves for the person who picks up a handed-off case."""
+    finding_id: UUID | None = None
+    findings: dict[str, Any] | None = None
+    tools_called: list[str] = Field(default_factory=list)
+
+
+class AgentHandoffRequest(BaseModel):
+    reason: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+    details: HandoffDetails
+
+
 class CaseStatusEventResponse(ORMModel):
     id: UUID
     investigation_case_id: UUID
@@ -370,7 +385,14 @@ class CaseStatusEventResponse(ORMModel):
     to_status: str
     reason: str | None = None
     actor_user_id: UUID | None = None
+    agent_run_id: UUID | None = None
+    handoff_details: HandoffDetails | None = None
     occurred_at: AwareUTCDateTime
+
+
+class CaseDetailResponse(CaseResponse):
+    handoff: CaseStatusEventResponse | None = None
+
 
 class EvidenceRecordResponse(ORMModel):
     id: UUID
