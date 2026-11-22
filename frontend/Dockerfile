@@ -1,5 +1,4 @@
-# Works once the React app is scaffolded in this folder (see frontend/README.md).
-FROM node:20-alpine AS build
+FROM node:22-alpine AS build
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci
