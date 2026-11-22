@@ -2,13 +2,17 @@
 
 Truth-first generator for mock records and the golden dataset.
 
-1. Scenario template
-2. True event timeline per PO
-3. Derive each system's records from the timeline (code)
-4. Inject defects and noise
-5. Run the OTIF rules on the defective records -> fine
-6. Build the dispute (LLM writes only the supplier's wording)
-7. Store the answer: rules on true facts, required evidence, handoff flag
+1. The scenario defines what happened on one PO line. A seeded random number
+   generator chooses the order size, transit time, shipment and arrival times.
+2. Generate mock PO versions, ASN, appointments, gate checks and receipt
+   postings from that timeline. Some cases include extra records that the
+   investigator must interpret using the policy.
+3. Generate the original fine from the system snapshot. For in-full cases it
+   uses the system's PO version and the receipts posted through arrival day.
+4. Choose a supplier claim from shared templates. The same wording can apply
+   to several causes.
+5. Generate the golden answer from the scenario and its true quantities.
+   The checker independently derives the answer from the visible records.
 
 ## Generated dataset
 
@@ -24,11 +28,24 @@ continues, and handoffs for missing receipts or a supported weather claim.
 It also includes R1/R2 pre-invoice flags and reversals on both sides of the
 manager-approval threshold.
 
-From the repository root:
+The second dataset revision uses `SYN2-` IDs so existing imports from the
+first revision can coexist with the richer fixtures.
+
+| What to check | Dataset variation |
+| --- | --- |
+| A reported storm | Qualifying weather for an on-schedule shipment and weather that fails the policy test |
+| An appointment change | Later DC slots and changes that keep the original MABD date |
+| An R2 flag | An overstated ASN with an observed shortage and a complete shipment with late receipt postings |
+| A revised PO | A valid update before shipment and another revision after dispatch |
+| Injected instructions | Supplier message only, attachment only, and both, with the investigation continuing |
+| Manager approval | Reversals of $499.80 and $500.40 for each of C2, C4 and C5 |
+
+Generate, validate and test from the repository root.
 
 ```sh
 python3 data-gen/generate_dataset.py
 python3 data-gen/check_dataset.py
+PYTHONPATH=data-gen python3 -m unittest discover -s data-gen/tests -v
 ```
 
 The generator uses a fixed seed and three cases per scenario by default.
