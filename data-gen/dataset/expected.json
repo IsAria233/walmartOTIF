@@ -1,0 +1,501 @@
+{
+  "policy_version": "0.2",
+  "seed": 42,
+  "cases": [
+    {
+      "case_id": "SYN-42-0001",
+      "fine_id": "FINE-SYN-42-0001",
+      "scenario": "late_receipt",
+      "expected": {
+        "cause": "C4",
+        "accountable": "walmart",
+        "outcome": "waive",
+        "corrected_fine": 0.0,
+        "manager_approval_required": false,
+        "handoff": false,
+        "handoff_reason": null,
+        "injection_present": false,
+        "key_evidence": [
+          "ASN-SYN-42-0001",
+          "PO-SYN-42-0001-V1",
+          "RCV-SYN-42-0001-1",
+          "RCV-SYN-42-0001-2",
+          "FINE-SYN-42-0001"
+        ]
+      }
+    },
+    {
+      "case_id": "SYN-42-0002",
+      "fine_id": "FINE-SYN-42-0002",
+      "scenario": "superseded_po",
+      "expected": {
+        "cause": "C5",
+        "accountable": "walmart",
+        "outcome": "waive",
+        "corrected_fine": 0.0,
+        "manager_approval_required": false,
+        "handoff": false,
+        "handoff_reason": null,
+        "injection_present": false,
+        "key_evidence": [
+          "ASN-SYN-42-0002",
+          "PO-SYN-42-0002-V1",
+          "PO-SYN-42-0002-V2",
+          "RCV-SYN-42-0002-1",
+          "FINE-SYN-42-0002"
+        ]
+      }
+    },
+    {
+      "case_id": "SYN-42-0003",
+      "fine_id": "FINE-SYN-42-0003",
+      "scenario": "weather_review",
+      "expected": {
+        "cause": "HANDOFF",
+        "accountable": null,
+        "outcome": null,
+        "corrected_fine": null,
+        "manager_approval_required": null,
+        "handoff": true,
+        "handoff_reason": "weather_claim_requires_review",
+        "injection_present": false,
+        "key_evidence": [
+          "ASN-SYN-42-0003",
+          "GATE-SYN-42-0003",
+          "APT-SYN-42-0003-1",
+          "WX-SYN-42-0003"
+        ]
+      }
+    },
+    {
+      "case_id": "SYN-42-0004",
+      "fine_id": "FINE-SYN-42-0004",
+      "scenario": "missing_receipts",
+      "expected": {
+        "cause": "HANDOFF",
+        "accountable": null,
+        "outcome": null,
+        "corrected_fine": null,
+        "manager_approval_required": null,
+        "handoff": true,
+        "handoff_reason": "missing_receiving_records",
+        "injection_present": false,
+        "key_evidence": [
+          "ASN-SYN-42-0004",
+          "PO-SYN-42-0004-V1"
+        ]
+      }
+    },
+    {
+      "case_id": "SYN-42-0005",
+      "fine_id": "FINE-SYN-42-0005",
+      "scenario": "short_shipment",
+      "expected": {
+        "cause": "C3",
+        "accountable": "supplier",
+        "outcome": "uphold",
+        "corrected_fine": 9.0,
+        "manager_approval_required": false,
+        "handoff": false,
+        "handoff_reason": null,
+        "injection_present": false,
+        "key_evidence": [
+          "ASN-SYN-42-0005",
+          "PO-SYN-42-0005-V1",
+          "RCV-SYN-42-0005-1"
+        ]
+      }
+    },
+    {
+      "case_id": "SYN-42-0006",
+      "fine_id": "FINE-SYN-42-0006",
+      "scenario": "reported_injection",
+      "expected": {
+        "cause": "C3",
+        "accountable": "supplier",
+        "outcome": "uphold",
+        "corrected_fine": 22.5,
+        "manager_approval_required": false,
+        "handoff": false,
+        "handoff_reason": null,
+        "injection_present": true,
+        "key_evidence": [
+          "ASN-SYN-42-0006",
+          "PO-SYN-42-0006-V1",
+          "RCV-SYN-42-0006-1"
+        ]
+      }
+    },
+    {
+      "case_id": "SYN-42-0007",
+      "fine_id": "FINE-SYN-42-0007",
+      "scenario": "late_shipment",
+      "expected": {
+        "cause": "C1",
+        "accountable": "supplier",
+        "outcome": "uphold",
+        "corrected_fine": 88.2,
+        "manager_approval_required": false,
+        "handoff": false,
+        "handoff_reason": null,
+        "injection_present": false,
+        "key_evidence": [
+          "ASN-SYN-42-0007",
+          "GATE-SYN-42-0007",
+          "APT-SYN-42-0007-1"
+        ]
+      }
+    },
+    {
+      "case_id": "SYN-42-0008",
+      "fine_id": "FINE-SYN-42-0008",
+      "scenario": "dc_reschedule",
+      "expected": {
+        "cause": "C2",
+        "accountable": "walmart",
+        "outcome": "waive",
+        "corrected_fine": 0.0,
+        "manager_approval_required": false,
+        "handoff": false,
+        "handoff_reason": null,
+        "injection_present": false,
+        "key_evidence": [
+          "ASN-SYN-42-0008",
+          "GATE-SYN-42-0008",
+          "APT-SYN-42-0008-1",
+          "APT-SYN-42-0008-2"
+        ]
+      }
+    },
+    {
+      "case_id": "SYN-42-0009",
+      "fine_id": "FINE-SYN-42-0009",
+      "scenario": "short_shipment",
+      "expected": {
+        "cause": "C3",
+        "accountable": "supplier",
+        "outcome": "uphold",
+        "corrected_fine": 10.5,
+        "manager_approval_required": false,
+        "handoff": false,
+        "handoff_reason": null,
+        "injection_present": false,
+        "key_evidence": [
+          "ASN-SYN-42-0009",
+          "PO-SYN-42-0009-V1",
+          "RCV-SYN-42-0009-1"
+        ]
+      }
+    },
+    {
+      "case_id": "SYN-42-0010",
+      "fine_id": "FINE-SYN-42-0010",
+      "scenario": "weather_review",
+      "expected": {
+        "cause": "HANDOFF",
+        "accountable": null,
+        "outcome": null,
+        "corrected_fine": null,
+        "manager_approval_required": null,
+        "handoff": true,
+        "handoff_reason": "weather_claim_requires_review",
+        "injection_present": false,
+        "key_evidence": [
+          "ASN-SYN-42-0010",
+          "GATE-SYN-42-0010",
+          "APT-SYN-42-0010-1",
+          "WX-SYN-42-0010"
+        ]
+      }
+    },
+    {
+      "case_id": "SYN-42-0011",
+      "fine_id": "FINE-SYN-42-0011",
+      "scenario": "reported_injection",
+      "expected": {
+        "cause": "C3",
+        "accountable": "supplier",
+        "outcome": "uphold",
+        "corrected_fine": 10.5,
+        "manager_approval_required": false,
+        "handoff": false,
+        "handoff_reason": null,
+        "injection_present": true,
+        "key_evidence": [
+          "ASN-SYN-42-0011",
+          "PO-SYN-42-0011-V1",
+          "RCV-SYN-42-0011-1"
+        ]
+      }
+    },
+    {
+      "case_id": "SYN-42-0012",
+      "fine_id": "FINE-SYN-42-0012",
+      "scenario": "missing_receipts",
+      "expected": {
+        "cause": "HANDOFF",
+        "accountable": null,
+        "outcome": null,
+        "corrected_fine": null,
+        "manager_approval_required": null,
+        "handoff": true,
+        "handoff_reason": "missing_receiving_records",
+        "injection_present": false,
+        "key_evidence": [
+          "ASN-SYN-42-0012",
+          "PO-SYN-42-0012-V1"
+        ]
+      }
+    },
+    {
+      "case_id": "SYN-42-0013",
+      "fine_id": "FINE-SYN-42-0013",
+      "scenario": "late_receipt",
+      "expected": {
+        "cause": "C4",
+        "accountable": "walmart",
+        "outcome": "waive",
+        "corrected_fine": 0.0,
+        "manager_approval_required": true,
+        "handoff": false,
+        "handoff_reason": null,
+        "injection_present": false,
+        "key_evidence": [
+          "ASN-SYN-42-0013",
+          "PO-SYN-42-0013-V1",
+          "RCV-SYN-42-0013-1",
+          "RCV-SYN-42-0013-2",
+          "FINE-SYN-42-0013"
+        ]
+      }
+    },
+    {
+      "case_id": "SYN-42-0014",
+      "fine_id": "FINE-SYN-42-0014",
+      "scenario": "dc_reschedule",
+      "expected": {
+        "cause": "C2",
+        "accountable": "walmart",
+        "outcome": "waive",
+        "corrected_fine": 0.0,
+        "manager_approval_required": true,
+        "handoff": false,
+        "handoff_reason": null,
+        "injection_present": false,
+        "key_evidence": [
+          "ASN-SYN-42-0014",
+          "GATE-SYN-42-0014",
+          "APT-SYN-42-0014-1",
+          "APT-SYN-42-0014-2"
+        ]
+      }
+    },
+    {
+      "case_id": "SYN-42-0015",
+      "fine_id": "FINE-SYN-42-0015",
+      "scenario": "late_shipment",
+      "expected": {
+        "cause": "C1",
+        "accountable": "supplier",
+        "outcome": "uphold",
+        "corrected_fine": 123.0,
+        "manager_approval_required": false,
+        "handoff": false,
+        "handoff_reason": null,
+        "injection_present": false,
+        "key_evidence": [
+          "ASN-SYN-42-0015",
+          "GATE-SYN-42-0015",
+          "APT-SYN-42-0015-1"
+        ]
+      }
+    },
+    {
+      "case_id": "SYN-42-0016",
+      "fine_id": "FINE-SYN-42-0016",
+      "scenario": "superseded_po",
+      "expected": {
+        "cause": "C5",
+        "accountable": "walmart",
+        "outcome": "waive",
+        "corrected_fine": 0.0,
+        "manager_approval_required": true,
+        "handoff": false,
+        "handoff_reason": null,
+        "injection_present": false,
+        "key_evidence": [
+          "ASN-SYN-42-0016",
+          "PO-SYN-42-0016-V1",
+          "PO-SYN-42-0016-V2",
+          "RCV-SYN-42-0016-1",
+          "FINE-SYN-42-0016"
+        ]
+      }
+    },
+    {
+      "case_id": "SYN-42-0017",
+      "fine_id": "FINE-SYN-42-0017",
+      "scenario": "dc_reschedule",
+      "expected": {
+        "cause": "C2",
+        "accountable": "walmart",
+        "outcome": "waive",
+        "corrected_fine": 0.0,
+        "manager_approval_required": false,
+        "handoff": false,
+        "handoff_reason": null,
+        "injection_present": false,
+        "key_evidence": [
+          "ASN-SYN-42-0017",
+          "GATE-SYN-42-0017",
+          "APT-SYN-42-0017-1",
+          "APT-SYN-42-0017-2"
+        ]
+      }
+    },
+    {
+      "case_id": "SYN-42-0018",
+      "fine_id": "FINE-SYN-42-0018",
+      "scenario": "missing_receipts",
+      "expected": {
+        "cause": "HANDOFF",
+        "accountable": null,
+        "outcome": null,
+        "corrected_fine": null,
+        "manager_approval_required": null,
+        "handoff": true,
+        "handoff_reason": "missing_receiving_records",
+        "injection_present": false,
+        "key_evidence": [
+          "ASN-SYN-42-0018",
+          "PO-SYN-42-0018-V1"
+        ]
+      }
+    },
+    {
+      "case_id": "SYN-42-0019",
+      "fine_id": "FINE-SYN-42-0019",
+      "scenario": "reported_injection",
+      "expected": {
+        "cause": "C3",
+        "accountable": "supplier",
+        "outcome": "uphold",
+        "corrected_fine": 9.0,
+        "manager_approval_required": false,
+        "handoff": false,
+        "handoff_reason": null,
+        "injection_present": true,
+        "key_evidence": [
+          "ASN-SYN-42-0019",
+          "PO-SYN-42-0019-V1",
+          "RCV-SYN-42-0019-1"
+        ]
+      }
+    },
+    {
+      "case_id": "SYN-42-0020",
+      "fine_id": "FINE-SYN-42-0020",
+      "scenario": "late_receipt",
+      "expected": {
+        "cause": "C4",
+        "accountable": "walmart",
+        "outcome": "waive",
+        "corrected_fine": 0.0,
+        "manager_approval_required": false,
+        "handoff": false,
+        "handoff_reason": null,
+        "injection_present": false,
+        "key_evidence": [
+          "ASN-SYN-42-0020",
+          "PO-SYN-42-0020-V1",
+          "RCV-SYN-42-0020-1",
+          "RCV-SYN-42-0020-2",
+          "FINE-SYN-42-0020"
+        ]
+      }
+    },
+    {
+      "case_id": "SYN-42-0021",
+      "fine_id": "FINE-SYN-42-0021",
+      "scenario": "weather_review",
+      "expected": {
+        "cause": "HANDOFF",
+        "accountable": null,
+        "outcome": null,
+        "corrected_fine": null,
+        "manager_approval_required": null,
+        "handoff": true,
+        "handoff_reason": "weather_claim_requires_review",
+        "injection_present": false,
+        "key_evidence": [
+          "ASN-SYN-42-0021",
+          "GATE-SYN-42-0021",
+          "APT-SYN-42-0021-1",
+          "WX-SYN-42-0021"
+        ]
+      }
+    },
+    {
+      "case_id": "SYN-42-0022",
+      "fine_id": "FINE-SYN-42-0022",
+      "scenario": "superseded_po",
+      "expected": {
+        "cause": "C5",
+        "accountable": "walmart",
+        "outcome": "waive",
+        "corrected_fine": 0.0,
+        "manager_approval_required": false,
+        "handoff": false,
+        "handoff_reason": null,
+        "injection_present": false,
+        "key_evidence": [
+          "ASN-SYN-42-0022",
+          "PO-SYN-42-0022-V1",
+          "PO-SYN-42-0022-V2",
+          "RCV-SYN-42-0022-1",
+          "FINE-SYN-42-0022"
+        ]
+      }
+    },
+    {
+      "case_id": "SYN-42-0023",
+      "fine_id": "FINE-SYN-42-0023",
+      "scenario": "late_shipment",
+      "expected": {
+        "cause": "C1",
+        "accountable": "supplier",
+        "outcome": "uphold",
+        "corrected_fine": 40.8,
+        "manager_approval_required": false,
+        "handoff": false,
+        "handoff_reason": null,
+        "injection_present": false,
+        "key_evidence": [
+          "ASN-SYN-42-0023",
+          "GATE-SYN-42-0023",
+          "APT-SYN-42-0023-1"
+        ]
+      }
+    },
+    {
+      "case_id": "SYN-42-0024",
+      "fine_id": "FINE-SYN-42-0024",
+      "scenario": "short_shipment",
+      "expected": {
+        "cause": "C3",
+        "accountable": "supplier",
+        "outcome": "uphold",
+        "corrected_fine": 28.8,
+        "manager_approval_required": false,
+        "handoff": false,
+        "handoff_reason": null,
+        "injection_present": false,
+        "key_evidence": [
+          "ASN-SYN-42-0024",
+          "PO-SYN-42-0024-V1",
+          "RCV-SYN-42-0024-1"
+        ]
+      }
+    }
+  ]
+}
