@@ -172,7 +172,7 @@ def main() -> None:
     args = parser.parse_args()
     inputs = json.loads((args.dataset_dir / "cases.json").read_text(encoding="utf-8"))
     golden = json.loads((args.dataset_dir / "expected.json").read_text(encoding="utf-8"))
-    if any(inputs.get(key) != golden.get(key) for key in ("seed", "policy_version", "dataset_revision")):
+    if any(inputs.get(key) != golden.get(key) for key in ("seed", "policy_version", "dataset_revision", "split")):
         parser.exit(1, "Inputs and labels have different dataset metadata.\n")
     revision = inputs.get("dataset_revision", 1)
     cases = {case["case_id"]: case for case in inputs["cases"]}

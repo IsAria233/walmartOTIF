@@ -1,9 +1,10 @@
 import unittest
+from collections import Counter
 from copy import deepcopy
 from datetime import datetime, timedelta
 
 from check_dataset import check_case, rederive
-from generate_dataset import generate_dataset
+from generate_dataset import generate_dataset, generate_evaluation
 
 
 class DatasetTests(unittest.TestCase):
@@ -87,6 +88,49 @@ class DatasetTests(unittest.TestCase):
         changed = deepcopy(row)
         changed["receiving"][-1]["ts"] = changed["receiving"][0]["ts"]
         self.assertIn("fine receipt count differs from postings through arrival day", check_case(changed, label))
+
+
+class EvaluationDatasetTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.splits = generate_evaluation(73)
+
+    def test_evaluation_has_100_new_unique_cases_and_balanced_splits(self):
+        regression, _ = generate_dataset(73, 3)
+        seen = {row["fine_record"]["fine_id"] for row in regression["cases"]}
+        for split, (inputs, answers) in self.splits.items():
+            per_scenario = 8 if split == "standard" else 2
+            self.assertEqual(inputs["split"], split)
+            self.assertEqual(len(inputs["cases"]), per_scenario * 10)
+            coverage = Counter(label["scenario"] for label in answers["cases"])
+            self.assertEqual(len(coverage), 10)
+            self.assertEqual(set(coverage.values()), {per_scenario})
+            for row, label in zip(inputs["cases"], answers["cases"], strict=True):
+                self.assertNotIn(label["fine_id"], seen)
+                seen.add(label["fine_id"])
+                self.assertEqual(check_case(row, label), [])
+        self.assertEqual(len(seen), 124)
+
+    def test_evaluation_controls_distinguish_the_actor_and_unexplained_lateness(self):
+        for inputs, answers in self.splits.values():
+            for row, label in zip(inputs["cases"], answers["cases"], strict=True):
+                if label["scenario"] == "supplier_reschedule":
+                    self.assertEqual(row["appointment_history"][-1]["by"], "supplier")
+                    self.assertEqual(rederive(row)["cause"], "C1")
+                elif label["scenario"] == "unexplained_arrival":
+                    self.assertEqual(rederive(row)["handoff_reason"], "unresolved_arrival")
+
+    def test_holdout_has_the_dispatch_cutoff_and_both_approval_paths(self):
+        inputs, answers = self.splits["holdout"]
+        c5 = [(row, label) for row, label in zip(inputs["cases"], answers["cases"], strict=True)
+              if label["scenario"] == "superseded_po"]
+        self.assertEqual(len(c5), 2)
+        for row, label in c5:
+            later = row["po"]["versions"][-1]
+            self.assertEqual(later["issued_at"], row["asn"]["ship_ts"])
+            self.assertNotIn(later["version_id"], label["expected"]["key_evidence"])
+        approvals = {label["expected"]["manager_approval_required"] for _, label in c5}
+        self.assertEqual(approvals, {True, False})
 
 
 if __name__ == "__main__":

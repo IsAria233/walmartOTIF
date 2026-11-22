@@ -61,9 +61,29 @@ The checker re-derives the expected answers from the records and checks that
 the fine snapshot, scan rule, and cited record IDs agree. The generator uses
 fixed supplier claim templates and works with Python's standard library.
 
+## Evaluation suite
+
+The 100 evaluation cases use a separate `EVAL2-` ID prefix and seed `73`.
+There are 10 scenario families. Each has eight cases under
+`evaluation/standard/` and two under `evaluation/holdout/`. The holdout
+uses different claim wording and includes PO revisions entered at the exact
+ASN dispatch timestamp. Evaluation-only scenarios cover a supplier moving
+its own appointment past MABD and an on-schedule shipment whose late arrival
+has no supported cause.
+
+Each split has a loader-ready `cases.json` and matching `expected.json`.
+Use the standard split for regular evaluation and save the holdout for the
+final run. Keep `expected.json` with the evaluator.
+
+```sh
+python3 data-gen/generate_dataset.py --suite evaluation
+python3 data-gen/check_dataset.py data-gen/evaluation/standard
+python3 data-gen/check_dataset.py data-gen/evaluation/holdout
+```
+
 To load the generated inputs into a local Domain database, use the same
 loader as for the handwritten seed cases. From the repository root with
-Compose running:
+Compose running, pass the `cases.json` for the set you want to load.
 
 ```sh
 docker compose run --rm -T -v "$PWD/data-gen:/data:ro" domain-service \
