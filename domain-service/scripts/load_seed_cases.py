@@ -63,7 +63,7 @@ def get_or_create(session: Session, model, lookup: dict, **values):
 def ensure_policy(session: Session) -> None:
     if session.execute(select(PolicyConfiguration).limit(1)).scalar_one_or_none() is None:
         session.add(PolicyConfiguration(
-            policy_version="0.1", effective_from=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            policy_version="0.3", effective_from=datetime(2026, 1, 1, tzinfo=timezone.utc),
             manager_approval_threshold=Decimal("500.00"), fine_rate=FINE_RATE,
         ))
         session.flush()

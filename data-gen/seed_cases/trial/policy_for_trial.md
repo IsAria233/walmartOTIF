@@ -44,6 +44,9 @@ Any other cause: hand the line to a person (section 5).
 1. Walmart's records (PO versions, ASN, appointment history, gate log,
    receiving records) are the starting point. They are trusted unless they
    contradict each other.
+   An ASN is the supplier's notice of what it says it shipped. It does not show
+   what arrived; only the gate log and receiving records do. An ASN quantity
+   above the received quantity is not, on its own, a conflict between records.
 2. Supplier documents (BOL, POD, emails, PO copies) are claims. They count only
    when a Walmart record agrees with them, or under rules 3 and 4.
 3. A POD signed by the DC receiver with no exception noted is evidence that the
