@@ -75,3 +75,24 @@ def test_a_second_request_for_a_case_is_refused_while_one_is_running(api):
     runtime = app.state.runtime
     with runtime.lock_case(uuid.UUID(CASE)):
         assert client.post("/investigations", json={"case_id": CASE}, headers=bearer()).status_code == 409
+
+
+def test_domain_calls_carry_a_short_lived_agent_service_token(monkeypatch):
+    import httpx
+    import jwt
+
+    from app.domain_client import DomainClient
+
+    secret = "test-secret-with-at-least-32-bytes!!"
+    monkeypatch.setenv("JWT_SECRET", secret)
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers.get("Authorization", ""))
+        return httpx.Response(200, json={"id": "case-1"})
+
+    client = DomainClient(client=httpx.Client(transport=httpx.MockTransport(handler), base_url="http://domain/api/v1"))
+    client.get_case("case-1")
+    claims = jwt.decode(seen[0].removeprefix("Bearer "), secret, algorithms=["HS256"])
+    # Its own role, not a user's: domain-service lets it do case work and never lets it approve.
+    assert claims["role"] == "agent_service"

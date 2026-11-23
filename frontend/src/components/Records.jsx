@@ -1,6 +1,18 @@
 import {Link} from 'react-router-dom';
 import {EmptyState, ErrorState, Loading} from './States';
 export const pretty = value => value ? String(value).replaceAll('_', ' ').replace(/^./, c => c.toUpperCase()) : 'Not recorded';
+/** One record as a labelled list. Nested records are listed inside their field; lists stay as compact JSON. */
+export function Fields({record}) {
+  const entries = Object.entries(record || {}).filter(([, value]) => value !== null && value !== '');
+  if (!entries.length) return <p>No fields recorded.</p>;
+  return <dl className="fine-fields">{entries.map(([key, value]) => (
+    <div key={key}>
+      <dt>{pretty(key)}</dt>
+      <dd className="record-text">{Array.isArray(value) ? JSON.stringify(value) : typeof value === 'object' ? <Fields record={value}/> : String(value)}</dd>
+    </div>
+  ))}</dl>;
+}
+
 export function Timestamp({value}) {
   return value ? <time dateTime={value} title={value}>{new Date(value).toLocaleString(undefined, {timeZoneName: 'short'})}</time> : 'Not recorded';
 }
@@ -29,5 +41,8 @@ export function ReadState({resource, empty, children}) {
   return children;
 }
 export function CaseTable({items}) {
-  return <div className="tablewrap"><table><caption className="sr-only">Investigation cases</caption><thead><tr><th scope="col">Case ID</th><th scope="col">Fine Record ID</th><th scope="col">Origin</th><th scope="col">Created</th><th scope="col">Status</th></tr></thead><tbody>{items.map(item => <tr key={item.id}><td><Link className="link record-id" to={`/cases/${encodeURIComponent(item.id)}`}>{item.id}</Link></td><td><Link className="link record-id" to={`/fines/${encodeURIComponent(item.fine_record_id)}`}>{item.fine_record_id}</Link></td><td>{pretty(item.origin)}</td><td><Timestamp value={item.created_at}/></td><td><Status value={item.status}/></td></tr>)}</tbody></table></div>;
+  return <div className="tablewrap"><table><caption className="sr-only">Investigation cases</caption><thead><tr><th scope="col">Case</th><th scope="col">PO line</th><th scope="col">Supplier</th><th scope="col">Fine type</th><th scope="col">Fine amount</th><th scope="col">Origin</th><th scope="col">Created</th><th scope="col">Status</th></tr></thead><tbody>{items.map(item => <tr key={item.id}>
+    <td><Link className="link" to={`/cases/${encodeURIComponent(item.id)}`}>{item.summary?.external_fine_id || item.id}</Link>{item.summary?.external_fine_id && <span className="subid record-id">{item.id}</span>}<Link className="subid link" to={`/fines/${encodeURIComponent(item.fine_record_id)}`}>Fine record</Link></td>
+    <td>{item.summary ? `${item.summary.po_number} · line ${item.summary.line_number}` : 'Not recorded'}</td><td>{item.summary?.supplier_name || 'Not recorded'}</td><td>{pretty(item.summary?.metric)}</td><td><Money value={item.summary?.original_amount}/></td>
+    <td>{pretty(item.origin)}</td><td><Timestamp value={item.created_at}/></td><td><Status value={item.status}/></td></tr>)}</tbody></table></div>;
 }

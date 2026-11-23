@@ -1,5 +1,5 @@
 import {useState} from 'react';
-import {pretty} from '../components/Records';
+import {Fields, pretty} from '../components/Records';
 export function sourceIndex(context) {
   const records = new Map();
   function add(type, record) { if (record?.id) records.set(`${type}:${record.id}`,record); }
@@ -20,7 +20,7 @@ export function sourceIndex(context) {
 export function RecordDetails({source}) {
   if(!source) return null;
   return <section className="evidence-detail" aria-label="Selected evidence"><h3>{pretty(source.type)} · {source.id}</h3><p className="badge gray">{['attachment','dispute'].includes(source.type) ? 'Supplier-provided claim' : 'Operational record / stored snapshot'}</p>
-    {source.record ? <pre tabIndex={0}>{JSON.stringify(source.record,null,2)}</pre> : <p role="status">This reference is unavailable in the supplied context. No additional evidence-read API is provided.</p>}
+    {source.record ? <Fields record={source.record}/> : <p role="status">This reference is unavailable in the supplied context. No additional evidence-read API is provided.</p>}
   </section>;
 }
 export default function Evidence({finding, context, caseContext}) {

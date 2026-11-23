@@ -38,13 +38,17 @@ function requestParams(fetcher) {return fetcher.mock.calls.filter(([url])=>url.s
 afterEach(()=>vi.unstubAllGlobals());
 
 it('maps queue DTOs without invented fields and links to the case placeholder',async()=>{
-  const {fetcher,token,router}=setup('/cases',()=>json(page([caseRecord])));await login();
+  const summary={external_fine_id:'FINE-1001',metric:'in_full',original_amount:'216.00',po_number:'PO-77',line_number:2,supplier_name:'Cedar Fork Supply'};
+  const {fetcher,token,router}=setup('/cases',()=>json(page([{...caseRecord,summary}])));await login();
   const table=await screen.findByRole('table',{name:'Investigation cases'});
-  expect(table).toHaveTextContent(fineId);expect(table).toHaveTextContent('Supplier dispute');expect(table).toHaveTextContent('Awaiting approval');
+  // A reviewer recognises a case by its fine, PO line and supplier; the UUID is secondary.
+  for (const text of ['FINE-1001','PO-77 · line 2','Cedar Fork Supply','In full','$216.00',caseRecord.id]) expect(table).toHaveTextContent(text);
+  expect(within(table).getByRole('link',{name:'FINE-1001'})).toHaveAttribute('href',`/cases/${caseRecord.id}`);expect(within(table).getByRole('link',{name:'Fine record'})).toHaveAttribute('href',`/fines/${fineId}`);
+  expect(table).toHaveTextContent('Supplier dispute');expect(table).toHaveTextContent('Awaiting approval');
   expect(table.querySelector('time')).toHaveAttribute('datetime',caseRecord.created_at);
   expect(within(table).queryByText('Supplier & PO')).not.toBeInTheDocument();
   const call=fetcher.mock.calls.find(([url])=>url.startsWith(casesPath));expect(call[1].headers.Authorization).toBe(`Bearer ${token}`);expect(call[1].method).toBe('GET');
-  await userEvent.click(within(table).getByRole('link',{name:caseId}));
+  await userEvent.click(within(table).getByRole('link',{name:'FINE-1001'}));
   expect(router.state.location.pathname).toBe(`/cases/${caseId}`);expect(screen.getByRole('heading',{level:1,name:'Case Workspace'})).toBeInTheDocument();
 });
 it('sends all supported queue filters as server parameters and clears them',async()=>{

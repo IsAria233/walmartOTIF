@@ -33,7 +33,7 @@ export async function resumeDecision(client,caseId,outcomeId,findingId) {
   // Validate the exact persisted Finding -> Run -> Outcome relationship.
   const finding=await client(domainPath(`findings/${findingId}`));
   if(finding.investigation_case_id!==caseId || finding.id!==findingId)throw new Error('Finding does not belong to this Case. Agent was not resumed.');
-  if(!finding.agent_run_id)return 'Decision recorded. No Agent Run ID is available for this Finding; resume is unavailable.';
+  if(!finding.agent_run_id)return finding.submitted_by_user_id ? 'Decision recorded.' : 'Decision recorded. No Agent Run ID is available for this Finding; resume is unavailable.';
   const path=`/api/agent/investigations/${finding.agent_run_id}`;
   const run=validateRun(await client(path),caseId);
   if(run.run_id!==finding.agent_run_id || run.domain?.outcome_id!==outcomeId || run.domain?.finding_id!==findingId)throw new Error('The known Run does not match this Outcome and Finding. Agent was not resumed.');

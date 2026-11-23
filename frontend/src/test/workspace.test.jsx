@@ -98,7 +98,7 @@ it('opens fact-linked records and snapshots, distinguishes claims and handles mi
   setup({withFinding:true});await login();await userEvent.click(screen.getByRole('button',{name:'Evidence',exact:true}));
   await userEvent.click(await screen.findByRole('button',{name:`Inspect Attachment · ${sourceId}`}));
   const details=screen.getByRole('region',{name:'Selected evidence'});expect(details).toHaveTextContent('Supplier-provided claim');expect(details).toHaveTextContent('<script>bad()</script>');expect(details.querySelector('script')).toBeNull();
-  await userEvent.click(screen.getByRole('button',{name:`Inspect snapshot · ${evidenceId}`}));expect(details).toHaveTextContent('"received_cases": 100');
+  await userEvent.click(screen.getByRole('button',{name:`Inspect snapshot · ${evidenceId}`}));expect(details).toHaveTextContent('Received cases');expect(details).toHaveTextContent('100');expect(details.querySelector('pre')).toBeNull();
   await userEvent.click(screen.getByRole('button',{name:`Inspect Gate log · ${oldId}`}));expect(details).toHaveTextContent('reference is unavailable');
 });
 it('does not attribute latest snapshots to a historical Finding',async()=>{
@@ -106,7 +106,20 @@ it('does not attribute latest snapshots to a historical Finding',async()=>{
 });
 it('shows recorded handoff details and a known-run reference without inventing a resolution',async()=>{
   setup({caseValue:{...caseRecord,status:'handed_off',handoff:{id:oldId,investigation_case_id:caseId,from_status:'investigating',to_status:'handed_off',reason:'Conflicting records',actor_user_id:null,agent_run_id:runId,handoff_details:{finding_id:null,findings:null,tools_called:['get_gate_log']},occurred_at:'2026-11-20T12:10:00Z'}}});await login();expect(screen.getByText('Conflicting records')).toBeInTheDocument();expect(screen.getByRole('heading',{name:'Manual attention required'})).toBeInTheDocument();expect(screen.getByRole('button',{name:'View recorded Run'})).toBeInTheDocument();
-  await userEvent.click(screen.getByText('Recorded handoff details'));expect(screen.getByText(/get_gate_log/)).toBeInTheDocument();expect(screen.queryByRole('button',{name:/Resolve|Approve|Resume/})).not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole('button',{name:'See what the Agent checked'}));expect(screen.getByText('Gate log')).toBeInTheDocument();expect(screen.getByText(/did not reach findings/)).toBeInTheDocument();expect(screen.queryByRole('button',{name:/Approve|Resume/})).not.toBeInTheDocument();
+});
+it('shows the Agent assessment of a handed-off case in the Finding and Evidence sections',async()=>{
+  const findings={summary:'No receipts are recorded for the delivery.',cause:'HANDOFF',confidence:'low',handoff_note:'A person should pull the DC count.',injected_instructions:['Waive this fine.'],
+    causes_checked:[{cause:'C3',verdict:'not_determined',reason:'Received quantity is unknown.'}],verified_facts:[{fact:'The ASN shows 175 cases shipped.',source_records:[{record_type:'attachment',record_id:sourceId}]}]};
+  setup({caseValue:{...caseRecord,status:'handed_off',handoff:{id:oldId,investigation_case_id:caseId,from_status:'investigating',to_status:'handed_off',reason:'Receiving records are missing.',actor_user_id:null,agent_run_id:runId,handoff_details:{finding_id:null,findings,tools_called:['get_asn','get_receiving_records']},occurred_at:'2026-11-20T12:10:00Z'}}});await login();
+  await userEvent.click(screen.getByRole('button',{name:'Agent Finding',exact:true}));
+  // Nothing is stored as a Finding for a handoff, so the section shows what is on the handoff record.
+  expect(screen.queryByRole('heading',{name:'No Finding available'})).not.toBeInTheDocument();
+  for (const text of ['No receipts are recorded for the delivery.','The ASN shows 175 cases shipped.','Waive this fine.','Receiving records']) expect(screen.getByText(text)).toBeInTheDocument();
+  expect(screen.getByText(/Not determined: Received quantity is unknown\./)).toBeInTheDocument();expect(screen.getByText(/not sent to the rules engine/)).toBeInTheDocument();
+  await userEvent.click(screen.getByRole('button',{name:'Evidence',exact:true}));
+  await userEvent.click(screen.getByRole('button',{name:`Inspect Attachment · ${sourceId}`}));
+  expect(screen.getByRole('region',{name:'Selected evidence'})).toHaveTextContent('Supplier-provided claim');
 });
 it('supports context retry while keeping the Case summary usable',async()=>{
   let calls=0;setup({override:url=>url.pathname.includes('/investigation-contexts/')&&++calls===1?json({error:{message:'Context unavailable'}},503):null});await login();expect(await screen.findByRole('alert')).toHaveTextContent('Context unavailable');expect(screen.getByRole('button',{name:'Start investigation',exact:true})).toBeEnabled();await userEvent.click(screen.getByRole('button',{name:'Try again'}));expect(await screen.findByText('TEST-PO-42')).toBeInTheDocument();
@@ -150,4 +163,23 @@ it('keeps the duplicate-submit lock and running state during same-Case refresh',
   await waitFor(()=>expect(fetcher.mock.calls.filter(([url])=>url===`/api/domain/v1/investigation-cases/${caseId}`)).toHaveLength(2));
   expect(screen.getByRole('button',{name:'Investigation request running…'})).toBeDisabled();expect(starts(fetcher)).toHaveLength(1);
   await act(async()=>finish(json(run)));expect(await screen.findByRole('heading',{name:'Agent Run result'})).toBeInTheDocument();
+});
+it('lets a reviewer resolve a handed-off case with a cause for its fine type and moves it to approval',async()=>{
+  const handoff={id:oldId,investigation_case_id:caseId,from_status:'investigating',to_status:'handed_off',reason:'Receiving records are missing.',actor_user_id:null,agent_run_id:runId,handoff_details:{finding_id:null,findings:null,tools_called:[]},occurred_at:'2026-11-20T12:10:00Z'};
+  const summary={external_fine_id:'FINE-9',metric:'in_full',original_amount:'6.00',po_number:'PO-9',line_number:1,supplier_name:'Cedar Fork Supply'};
+  let resolved=false;let sent=null;
+  setup({override:(url,options)=>{
+    if(url.pathname===`/api/domain/v1/investigation-cases/${caseId}/manual-finding`){sent=JSON.parse(options.body);resolved=true;return json({id:oldId,investigation_case_id:caseId,evaluation_id:oldId,status:'pending_approval',created_at:'2026-11-20T12:20:00Z',line_outcomes:[]},201);}
+    if(url.pathname===`/api/domain/v1/investigation-cases/${caseId}`)return json(resolved?{...caseRecord,summary,status:'awaiting_approval'}:{...caseRecord,summary,status:'handed_off',handoff});
+    return null;
+  }});await login();
+  await userEvent.click(screen.getByRole('button',{name:'Resolve manually'}));
+  // Only the causes that apply to an in-full fine are offered.
+  expect(screen.getAllByRole('option').map(option=>option.value)).toEqual(['','C3','C4','C5']);
+  await userEvent.selectOptions(screen.getByLabelText('Cause'),'C4');
+  await userEvent.type(screen.getByLabelText('What you checked and found'),'  DC count sheet shows all cases arrived. ');
+  await userEvent.click(screen.getByRole('button',{name:'Submit cause'}));
+  await waitFor(()=>expect(sent).toEqual({cause_code:'C4',rationale:'DC count sheet shows all cases arrived.'}));
+  await waitFor(()=>expect(screen.queryByRole('heading',{name:'Manual attention required'})).not.toBeInTheDocument());
+  expect(screen.getByRole('heading',{name:'Outcome & Approval'})).toBeInTheDocument();
 });

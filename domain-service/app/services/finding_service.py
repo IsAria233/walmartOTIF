@@ -77,6 +77,7 @@ def create_finding(session: Session, *, case_id: uuid.UUID, payload: dict) -> In
         confidence_level=payload.get("confidence_level"),
         ruled_out_causes=payload.get("ruled_out_causes") or None,
         agent_run_id=payload.get("agent_run_id"),
+        submitted_by_user_id=payload.get("submitted_by_user_id"),
         handoff_required=payload.get("handoff_required", False),
         handoff_reason=payload.get("handoff_reason"),
         injection_detected=payload.get("injection_detected", False),

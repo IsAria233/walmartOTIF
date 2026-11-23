@@ -5,6 +5,7 @@ import {isUUID, UUID_PATTERN} from '../api/domain';
 import useRead from '../hooks/useRead';
 import {ErrorState, Loading} from '../components/States';
 import {pretty} from '../components/Records';
+import {AgentAssessment, ToolActivity} from './Assessment';
 
 export default function AgentPanel({caseRecord, suggestedRunId, onComplete}) {
   const {client,user} = useAuth();
@@ -50,8 +51,8 @@ export default function AgentPanel({caseRecord, suggestedRunId, onComplete}) {
     {knownId && <div><p className="record-id">Run ID: {knownId}</p><button className="btn small" onClick={read.refresh} disabled={busy || read.loading}>Refresh Run</button></div>}
     {read.loading && <Loading message="Loading Run details…"/>}{read.error && <ErrorState message={read.error.message} onRetry={read.refresh}/>} {readError && <ErrorState message={readError}/>}
     {run && !readError && <div className="run-result"><h3>Agent Run result</h3><p>Status: <strong>{pretty(run.status)}</strong></p><p>{run.paused_for_approval ? 'Paused for human approval.' : run.unfinished ? 'Unfinished run; recovery may be needed.' : 'No pending execution reported.'}</p>{run.handoff_reason && <p>Handoff: {run.handoff_reason}</p>}<p>Model steps: {run.model_steps ?? 'Not supplied'}</p>{run.trace_id && <p className="record-id">Trace ID: {run.trace_id}</p>}
-      {run.findings && <details><summary>Agent Run assessment (not a human decision)</summary><p>{run.findings.summary}</p><p>Cause: {run.findings.cause} · Confidence: {run.findings.confidence}</p><pre>{JSON.stringify({verified_facts:run.findings.verified_facts,causes_checked:run.findings.causes_checked,injected_instructions:run.findings.injected_instructions},null,2)}</pre></details>}
-      {!!run.tool_log?.length && <details><summary>Recorded tool activity</summary><pre>{JSON.stringify(run.tool_log,null,2)}</pre></details>}
+      {run.findings && <details><summary>Agent Run assessment (not a human decision)</summary><AgentAssessment findings={run.findings}/></details>}
+      {!!run.tool_log?.length && <details><summary>Recorded tool activity</summary><ToolActivity log={run.tool_log}/></details>}
     </div>}
   </div></section>;
 }

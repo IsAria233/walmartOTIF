@@ -15,6 +15,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.schemas import (
+    ManualFindingRequest,
     ASNPageResponse, ASNResponse, AgentHandoffRequest, ApprovalDecisionRequest, ApprovalDecisionResponse,
     ApprovalPageResponse, AppointmentPageResponse, CaseCreateRequest, CaseDetailResponse,
     CaseQueueResponse, CaseResponse, CaseStatusEventResponse, CaseStatusRequest, DeliveryResponse,
@@ -43,9 +44,41 @@ from app.services import (
     submit_dispute, transition_case,
 )
 from app.services.case_service import current_handoff, record_agent_handoff
+from app.services.case_queue_service import case_summary
+from app.services.manual_resolution_service import resolve_handoff
 from app.services.exceptions import DomainError
 
-router = APIRouter(prefix="/api/v1")
+ROLES = {"dispute_associate", "compliance_manager", "admin"}
+# agent-service signs its own short-lived tokens with this role. It reads records and
+# writes case work; it is in no approval stage, so it can never approve.
+SERVICE_ROLE = "agent_service"
+
+
+def _token_claims(request: Request) -> dict:
+    """Verify the Auth Service JWT. Both services share JWT_SECRET (HS256)."""
+    unauthorized = HTTPException(status_code=401, headers={"WWW-Authenticate": "Bearer"},
+        detail={"error": {"code": "unauthenticated", "message": "A valid bearer token is required"}})
+    secret = os.getenv("JWT_SECRET", "")
+    if len(secret.encode("utf-8")) < 32:
+        raise HTTPException(status_code=503, detail={"error": {"code": "identity_unavailable", "message": "JWT_SECRET is not configured"}})
+    scheme, _, token = request.headers.get("Authorization", "").partition(" ")
+    if scheme.lower() != "bearer" or not token:
+        raise unauthorized
+    try:
+        return jwt.decode(token.strip(), secret, algorithms=["HS256"], options={"require": ["sub", "role", "exp"]})
+    except jwt.InvalidTokenError as exc:
+        raise unauthorized from exc
+
+
+def require_identity(request: Request) -> dict:
+    """Every Domain route needs a signed-in internal user or agent-service."""
+    claims = _token_claims(request)
+    if claims["role"] not in ROLES | {SERVICE_ROLE}:
+        raise HTTPException(status_code=403, detail={"error": {"code": "forbidden", "message": "Unknown role"}})
+    return claims
+
+
+router = APIRouter(prefix="/api/v1", dependencies=[Depends(require_identity)])
 
 
 def serialize(value: Any):
@@ -115,7 +148,8 @@ def case_queue(
         fine_record_id=fine_record_id, supplier_id=supplier_id,
         created_from=created_from, created_to=created_to, page=page,
         page_size=page_size, sort_by=sort_by, sort_order=sort_order)
-    return {"items": items, "page": page, "page_size": page_size,
+    return {"items": [{**serialize(item), "summary": case_summary(item)} for item in items],
+            "page": page, "page_size": page_size,
             "total": total, "total_pages": math.ceil(total / page_size) if total else 0}
 
 
@@ -132,7 +166,7 @@ def get_case(case_id: uuid.UUID, db: Session = Depends(get_db)):
     case = db.get(InvestigationCase, case_id)
     if case is None:
         raise NotFound("Investigation Case not found")
-    return {**serialize(case), "handoff": current_handoff(db, case)}
+    return {**serialize(case), "summary": case_summary(case), "handoff": current_handoff(db, case)}
 
 
 @router.patch("/investigation-cases/{case_id}/status", response_model=CaseResponse)
@@ -142,9 +176,14 @@ def patch_case_status(case_id: uuid.UUID, payload: CaseStatusRequest, db: Sessio
     return case
 
 
-# Service-to-service only: the gateway does not route /internal paths.
+# Service-to-service only: the gateway does not route /internal paths, and only agent-service's role is accepted.
 @router.put("/internal/investigation-cases/{case_id}/handoffs/{run_id}", response_model=CaseStatusEventResponse)
-def put_agent_handoff(case_id: uuid.UUID, run_id: uuid.UUID, payload: AgentHandoffRequest, db: Session = Depends(get_db)):
+def put_agent_handoff(
+    case_id: uuid.UUID, run_id: uuid.UUID, payload: AgentHandoffRequest,
+    claims: dict = Depends(require_identity), db: Session = Depends(get_db),
+):
+    if claims["role"] != SERVICE_ROLE:
+        raise HTTPException(status_code=403, detail={"error": {"code": "forbidden", "message": "Only agent-service records handoffs"}})
     with db.begin():
         event = record_agent_handoff(
             db, case_id=case_id, run_id=run_id, reason=payload.reason,
@@ -253,28 +292,11 @@ def get_outcomes(case_id: uuid.UUID, page: int = Query(1, ge=1), page_size: int 
     return page_data
 
 
-ROLES = {"dispute_associate", "compliance_manager", "admin"}
 # Who may record a decision at each approval stage (policy section 8).
 STAGE_ROLES = {
     "associate": {"dispute_associate", "compliance_manager"},
     "manager": {"compliance_manager"},
 }
-
-
-def _token_claims(request: Request) -> dict:
-    """Verify the Auth Service JWT. Both services share JWT_SECRET (HS256)."""
-    unauthorized = HTTPException(status_code=401, headers={"WWW-Authenticate": "Bearer"},
-        detail={"error": {"code": "unauthenticated", "message": "A valid bearer token is required"}})
-    secret = os.getenv("JWT_SECRET", "")
-    if len(secret.encode("utf-8")) < 32:
-        raise HTTPException(status_code=503, detail={"error": {"code": "identity_unavailable", "message": "JWT_SECRET is not configured"}})
-    scheme, _, token = request.headers.get("Authorization", "").partition(" ")
-    if scheme.lower() != "bearer" or not token:
-        raise unauthorized
-    try:
-        return jwt.decode(token.strip(), secret, algorithms=["HS256"], options={"require": ["sub", "role", "exp"]})
-    except jwt.InvalidTokenError as exc:
-        raise unauthorized from exc
 
 
 def authenticated_user(request: Request) -> uuid.UUID:
@@ -303,6 +325,24 @@ def post_approval(outcome_id: uuid.UUID, payload: ApprovalDecisionRequest, reque
             line_outcome_id=payload.line_outcome_id, stage=payload.stage,
             decision=payload.decision, auth_user_id=user_id, comment=payload.comment)
     return serialize(decision)
+
+
+@router.post("/investigation-cases/{case_id}/manual-finding", response_model=OutcomeDetailResponse, status_code=201)
+def post_manual_finding(case_id: uuid.UUID, payload: ManualFindingRequest, request: Request, db: Session = Depends(get_db)):
+    """A reviewer decides the cause of a handed-off case. The rules engine and approval then run as for an Agent finding."""
+    user_id = authenticated_user(request)
+    role = authenticated_role(request)
+    if role not in STAGE_ROLES["associate"]:
+        raise HTTPException(status_code=403, detail={"error": {"code": "forbidden",
+            "message": f"Role {role} cannot resolve a handed-off Case"}})
+    with db.begin():
+        outcome = resolve_handoff(db, case_id=case_id, cause_code=payload.cause_code,
+                                  rationale=payload.rationale, user_id=user_id)
+        lines = db.execute(select(LineOutcome).where(LineOutcome.case_outcome_id == outcome.id)).scalars().all()
+        result = {"id": outcome.id, "investigation_case_id": outcome.investigation_case_id,
+                  "evaluation_id": outcome.evaluation_id, "status": outcome.status,
+                  "created_at": outcome.created_at, "line_outcomes": [serialize(line) for line in lines]}
+    return serialize(result)
 
 
 @router.get("/outcomes/{outcome_id}/approvals", response_model=ApprovalPageResponse)

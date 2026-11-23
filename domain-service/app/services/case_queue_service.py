@@ -5,7 +5,7 @@ from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.db.models import FineRecord, InvestigationCase, POLine, PurchaseOrder
 
@@ -31,5 +31,21 @@ def list_cases(session: Session, *, status: str | None = None, origin: str | Non
         stmt, count_stmt = stmt.where(InvestigationCase.created_at <= created_to), count_stmt.where(InvestigationCase.created_at <= created_to)
     total = session.scalar(count_stmt) or 0
     ordering = sort_col.asc() if sort_order == "asc" else sort_col.desc()
+    # Load what case_summary reads in the same query, not one query per row.
+    stmt = stmt.options(
+        joinedload(InvestigationCase.fine_record).joinedload(FineRecord.po_line)
+        .joinedload(POLine.purchase_order).joinedload(PurchaseOrder.supplier)
+    )
     items = session.execute(stmt.order_by(ordering, InvestigationCase.id.asc()).offset((page - 1) * page_size).limit(page_size)).scalars().all()
     return items, total
+
+
+def case_summary(case: InvestigationCase) -> dict:
+    """Readable identifiers for one case: the fine, its PO line and the supplier."""
+    fine = case.fine_record
+    line = fine.po_line
+    order = line.purchase_order
+    return {
+        "external_fine_id": fine.external_fine_id, "metric": fine.metric, "original_amount": fine.original_amount,
+        "po_number": order.po_number, "line_number": line.line_number, "supplier_name": order.supplier.name,
+    }

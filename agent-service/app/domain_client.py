@@ -2,8 +2,23 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime, timedelta, timezone
 
 import httpx
+import jwt
+
+# How agent-service identifies itself to domain-service: its own role, which is in no approval stage.
+SERVICE_ROLE = "agent_service"
+SERVICE_SUBJECT = "00000000-0000-4000-8000-00000000a9e7"
+
+
+def service_token() -> str | None:
+    """A one-minute token signed with the secret the services share, or None when it is not configured."""
+    secret = os.getenv("JWT_SECRET", "")
+    if not secret:
+        return None
+    claims = {"sub": SERVICE_SUBJECT, "role": SERVICE_ROLE, "exp": datetime.now(timezone.utc) + timedelta(minutes=1)}
+    return jwt.encode(claims, secret, algorithm="HS256")
 
 
 class DomainError(RuntimeError):
@@ -18,7 +33,9 @@ class DomainClient:
         self._http = client or httpx.Client(base_url=f"{root}/api/v1", timeout=15.0)
 
     def _call(self, method: str, path: str, body: dict | None = None) -> dict:
-        response = self._http.request(method, path, json=body)
+        token = service_token()
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
+        response = self._http.request(method, path, json=body, headers=headers)
         if response.status_code >= 400:
             raise DomainError(response.status_code, response.text)
         return response.json()

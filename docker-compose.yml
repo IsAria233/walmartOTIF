@@ -51,7 +51,6 @@ services:
 
   frontend:
     build: ./frontend
-    profiles: ["frontend"]   # enable after the React app is scaffolded
     ports:
       - "3000:80"
     depends_on: [gateway]

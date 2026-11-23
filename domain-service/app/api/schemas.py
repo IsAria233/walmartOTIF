@@ -6,7 +6,7 @@ from decimal import Decimal
 from typing import Annotated, Any, Generic, Literal, TypeVar
 from uuid import UUID
 
-from pydantic import AwareDatetime, BeforeValidator, BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import AwareDatetime, BeforeValidator, BaseModel, ConfigDict, Field, StringConstraints, field_validator
 
 
 class ORMModel(BaseModel):
@@ -100,6 +100,21 @@ class FindingCreateRequest(BaseModel):
     facts: list[FindingFactRequest] = Field(default_factory=list)
 
 
+class ManualFindingRequest(BaseModel):
+    """A reviewer's decision on a handed-off case: the cause and why."""
+    model_config = ConfigDict(extra="forbid")
+
+    cause_code: Literal["C1", "C2", "C3", "C4", "C5"]
+    rationale: str = Field(min_length=1, max_length=4000)
+
+    @field_validator("rationale")
+    @classmethod
+    def rationale_has_text(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("rationale must not be blank")
+        return value.strip()
+
+
 class FindingFactResponse(BaseModel):
     id: UUID
     fact_key: str
@@ -114,6 +129,7 @@ class FindingResponse(BaseModel):
     investigation_case_id: UUID
     version_number: int
     agent_run_id: UUID | None
+    submitted_by_user_id: UUID | None = None
     cause_code: str | None
     summary: str | None
     confidence: Decimal | None
@@ -196,8 +212,22 @@ class ScanRequest(BaseModel):
     fine_record_ids: list[UUID] | None = None
 
 
+class CaseSummary(BaseModel):
+    """What a person needs to recognise a case in a list, without opening it."""
+    external_fine_id: str | None = None
+    metric: str | None = None
+    original_amount: Decimal
+    po_number: str
+    line_number: int
+    supplier_name: str
+
+
+class CaseQueueItem(CaseResponse):
+    summary: CaseSummary
+
+
 class CaseQueueResponse(BaseModel):
-    items: list[CaseResponse]
+    items: list[CaseQueueItem]
     page: int
     page_size: int
     total: int
@@ -390,7 +420,7 @@ class CaseStatusEventResponse(ORMModel):
     occurred_at: AwareUTCDateTime
 
 
-class CaseDetailResponse(CaseResponse):
+class CaseDetailResponse(CaseQueueItem):
     handoff: CaseStatusEventResponse | None = None
 
 
