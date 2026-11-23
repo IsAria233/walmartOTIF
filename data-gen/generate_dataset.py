@@ -8,7 +8,7 @@ from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from pathlib import Path
 
-POLICY_VERSION = "0.3"
+POLICY_VERSION = "0.4"
 DATASET_REVISION = 2
 FINE_RATE = Decimal("0.03")
 MANAGER_THRESHOLD = Decimal("500.00")

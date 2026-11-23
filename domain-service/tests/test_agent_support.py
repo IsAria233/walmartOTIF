@@ -175,3 +175,35 @@ def test_a_reviewer_resolves_a_handed_off_case_and_it_goes_to_approval(api, monk
     approval = {"line_outcome_id": line["id"], "stage": "associate", "decision": "approved"}
     assert client.post(f"/api/v1/outcomes/{outcome.json()['id']}/approvals", json=approval, headers=as_reviewer).status_code == 201
     assert client.get(base, headers=as_reviewer).json()["status"] == "closed"
+
+
+@pytest.mark.real_auth
+def test_a_reviewer_records_a_cause_outside_c1_c5_and_names_the_party(api, monkeypatch):
+    monkeypatch.setenv("JWT_SECRET", SECRET)
+    client, case_id = api
+    base, as_reviewer = f"/api/v1/investigation-cases/{case_id}", bearer("compliance_manager")
+    handoff = f"/api/v1/internal/investigation-cases/{case_id}/handoffs/{uuid.uuid4()}"
+    client.put(handoff, json={"reason": "Weather claim holds.", "details": {}}, headers=bearer("agent_service"))
+    other = {"cause_code": "OTHER", "rationale": "Storm alert covered the DC; shipment was on schedule."}
+
+    # OTHER has no rule in the policy, so the reviewer must say who is accountable; C1-C5 must not.
+    assert client.post(f"{base}/manual-finding", json=other, headers=as_reviewer).status_code == 422
+    with_party = {"cause_code": "C4", "rationale": "x", "accountable_party": "walmart"}
+    assert client.post(f"{base}/manual-finding", json=with_party, headers=as_reviewer).status_code == 422
+
+    outcome = client.post(f"{base}/manual-finding", json={**other, "accountable_party": "walmart"}, headers=as_reviewer)
+    assert outcome.status_code == 201, outcome.text
+    line = outcome.json()["line_outcomes"][0]
+    assert (line["accountable_party"], line["outcome"], line["corrected_amount"]) == ("walmart", "waive", "0.00")
+    finding = client.get(f"/api/v1/findings/{line['finding_id']}", headers=as_reviewer).json()
+    assert (finding["cause_code"], finding["reviewer_accountable_party"]) == ("OTHER", "walmart")
+
+
+def test_the_agent_cannot_use_the_other_cause(api):
+    client, case_id = api
+    base = f"/api/v1/investigation-cases/{case_id}"
+    client.patch(f"{base}/status", json={"status": "investigating"})
+    finding = client.post(f"{base}/findings", json={"cause_code": "OTHER", "summary": "Weather.", "agent_run_id": str(uuid.uuid4())})
+    assert finding.status_code == 201
+    # Stored as written, but the rules engine will not compute a result for it.
+    assert client.post(f"{base}/evaluate", json={"finding_id": finding.json()["id"]}).status_code == 409

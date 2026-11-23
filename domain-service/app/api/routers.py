@@ -336,8 +336,8 @@ def post_manual_finding(case_id: uuid.UUID, payload: ManualFindingRequest, reque
         raise HTTPException(status_code=403, detail={"error": {"code": "forbidden",
             "message": f"Role {role} cannot resolve a handed-off Case"}})
     with db.begin():
-        outcome = resolve_handoff(db, case_id=case_id, cause_code=payload.cause_code,
-                                  rationale=payload.rationale, user_id=user_id)
+        outcome = resolve_handoff(db, case_id=case_id, cause_code=payload.cause_code, rationale=payload.rationale,
+                                  user_id=user_id, accountable_party=payload.accountable_party)
         lines = db.execute(select(LineOutcome).where(LineOutcome.case_outcome_id == outcome.id)).scalars().all()
         result = {"id": outcome.id, "investigation_case_id": outcome.investigation_case_id,
                   "evaluation_id": outcome.evaluation_id, "status": outcome.status,

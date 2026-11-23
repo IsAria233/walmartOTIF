@@ -22,7 +22,7 @@ holds the matching labels by `case_id` and external `fine_id`. Give the Agent
 only the records from `cases.json`. The existing Domain loader accepts that
 file directly.
 
-The checked-in dataset contains 24 cases under OTIF policy v0.3. It covers
+The checked-in dataset contains 24 cases under OTIF policy v0.4. It covers
 C1–C5, injected instructions that are reported while the investigation
 continues, and handoffs for missing receipts or a supported weather claim.
 It also includes R1/R2 pre-invoice flags and reversals on both sides of the
