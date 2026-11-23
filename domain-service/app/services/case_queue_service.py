@@ -7,10 +7,10 @@ from uuid import UUID
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, joinedload
 
-from app.db.models import FineRecord, InvestigationCase, POLine, PurchaseOrder
+from app.db.models import FineRecord, InvestigationCase, LineOutcome, POLine, PurchaseOrder
 
 
-def list_cases(session: Session, *, status: str | None = None, origin: str | None = None, fine_record_id: UUID | None = None, supplier_id: UUID | None = None, created_from: datetime | None = None, created_to: datetime | None = None, page: int = 1, page_size: int = 20, sort_by: str = "created_at", sort_order: str = "desc"):
+def list_cases(session: Session, *, status: str | None = None, origin: str | None = None, fine_record_id: UUID | None = None, supplier_id: UUID | None = None, created_from: datetime | None = None, created_to: datetime | None = None, approval_stage: str | None = None, page: int = 1, page_size: int = 20, sort_by: str = "created_at", sort_order: str = "desc"):
     allowed = {"created_at": InvestigationCase.created_at, "status": InvestigationCase.status, "origin": InvestigationCase.origin}
     sort_col = allowed.get(sort_by, InvestigationCase.created_at)
     stmt = select(InvestigationCase)
@@ -25,6 +25,11 @@ def list_cases(session: Session, *, status: str | None = None, origin: str | Non
         if value is not None:
             stmt = stmt.where(column == value)
             count_stmt = count_stmt.where(column == value)
+    if approval_stage is not None:
+        # Cases with a line waiting at that stage; used with status=awaiting_approval for a reviewer's inbox.
+        waiting = "pending_manager_approval" if approval_stage == "manager" else "pending_approval"
+        at_stage = InvestigationCase.id.in_(select(LineOutcome.investigation_case_id).where(LineOutcome.approval_status == waiting))
+        stmt, count_stmt = stmt.where(at_stage), count_stmt.where(at_stage)
     if created_from is not None:
         stmt, count_stmt = stmt.where(InvestigationCase.created_at >= created_from), count_stmt.where(InvestigationCase.created_at >= created_from)
     if created_to is not None:

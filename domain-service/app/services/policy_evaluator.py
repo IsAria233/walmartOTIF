@@ -23,9 +23,16 @@ def evaluate_line(fine: FineRecord, finding: InvestigationFinding, policy: Polic
     # produce a financial result; the policy requires it to be handed off.
     cause = (finding.cause_code or "").strip().upper()
     cause_parties = {"C1": "supplier", "C2": "walmart", "C3": "supplier", "C4": "walmart", "C5": "walmart"}
-    if cause not in cause_parties:
+    if cause == "OTHER":
+        # Policy section 6: a person may record a cause outside C1-C5 and name the party.
+        # The Agent cannot: its findings carry no reviewer.
+        party = finding.reviewer_accountable_party
+        if finding.submitted_by_user_id is None or party not in {"supplier", "walmart"}:
+            raise PolicyUnavailable("Cause OTHER needs a reviewer and the party the reviewer named")
+    elif cause not in cause_parties:
         raise PolicyUnavailable("Finding cause is missing or outside the supported C1-C5 policy")
-    party = cause_parties[cause]
+    else:
+        party = cause_parties[cause]
     if fine.non_compliant_cases is None or fine.case_cost_snapshot is None or fine.original_amount is None:
         raise PolicyUnavailable("Fine Record lacks inputs required by policy v0.1")
     base = Decimal(fine.non_compliant_cases) * Decimal(fine.case_cost_snapshot) * Decimal(policy.fine_rate)

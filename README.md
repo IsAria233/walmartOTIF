@@ -39,11 +39,14 @@ The frontend is at `http://localhost:3000`.
 Send `Authorization: Bearer <token>` on every request except login and the
 health checks. The gateway forwards the header. Every domain-service route
 checks it; agent-service calls domain-service with its own short-lived token
-(role `agent_service`), which can do case work and cannot approve.
+(role `agent_service`), which can do case work and cannot approve. Only that role
+may write the steps of an investigation (status, finding, evaluation, outcome);
+only `admin` may create cases, disputes and scan runs.
 
 A handed-off case is resolved by a person: `POST
 /api/domain/v1/investigation-cases/{id}/manual-finding` with `cause_code` and
-`rationale` (dispute associate or compliance manager). The rules engine then
+`rationale` (dispute associate or compliance manager). The cause is one of C1-C5
+that applies to the fine type, or `OTHER` with an `accountable_party`. The rules engine then
 computes the result and the normal approval follows. View gateway logs with `docker compose logs gateway`.
 
 ## End-to-end slice

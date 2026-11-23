@@ -14,26 +14,31 @@ from app.services.outcome_service import create_outcome
 
 # Policy section 3: which causes apply to which fine type.
 CAUSES_BY_METRIC = {"on_time": {"C1", "C2"}, "in_full": {"C3", "C4", "C5"}}
+OTHER = "OTHER"
 
 
 def resolve_handoff(
     session: Session, *, case_id: uuid.UUID, cause_code: str, rationale: str, user_id: uuid.UUID,
+    accountable_party: str | None = None,
 ) -> CaseOutcome:
     """Store the reviewer's finding, run the rules engine and open the approval. Caller owns the transaction.
 
-    The reviewer chooses the cause only. Accountability and amounts still come
-    from the rules engine, and the result still needs approval.
+    For C1-C5 the reviewer chooses the cause only and the policy assigns the
+    party. For OTHER, a cause the policy has no rule for, the reviewer also
+    names the party. Amounts come from the rules engine either way, and the
+    result still needs approval.
     """
     case = _lock_case(session, case_id)
     if case.status != "handed_off":
         raise Conflict("Only a handed-off Case can be resolved by a reviewer")
     allowed = CAUSES_BY_METRIC.get(case.fine_record.metric or "", set())
-    if cause_code not in allowed:
+    if cause_code != OTHER and cause_code not in allowed:
         raise InvalidRequest(f"Cause {cause_code} does not apply to a {case.fine_record.metric} fine")
     transition_case(session, case_id=case_id, target="investigating",
                     reason="Taken over by a reviewer", actor_user_id=user_id)
     finding = create_finding(session, case_id=case_id, payload={
         "cause_code": cause_code, "summary": rationale, "submitted_by_user_id": user_id,
+        "reviewer_accountable_party": accountable_party,
     })
     evaluation = create_evaluation(session, case_id=case_id, finding_id=finding.id)
     return create_outcome(session, case_id=case_id, evaluation_id=evaluation.id)

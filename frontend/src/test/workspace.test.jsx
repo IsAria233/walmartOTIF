@@ -175,11 +175,32 @@ it('lets a reviewer resolve a handed-off case with a cause for its fine type and
   }});await login();
   await userEvent.click(screen.getByRole('button',{name:'Resolve manually'}));
   // Only the causes that apply to an in-full fine are offered.
-  expect(screen.getAllByRole('option').map(option=>option.value)).toEqual(['','C3','C4','C5']);
-  await userEvent.selectOptions(screen.getByLabelText('Cause'),'C4');
+  expect(screen.getAllByRole('option').map(option=>option.value)).toEqual(['','C3','C4','C5','OTHER']);
+  // The party is asked for only with Other; the policy assigns it for C1-C5.
+  await userEvent.selectOptions(screen.getByLabelText('Cause'),'OTHER');expect(screen.getByLabelText('Accountable party')).toBeRequired();
+  await userEvent.selectOptions(screen.getByLabelText('Cause'),'C4');expect(screen.queryByLabelText('Accountable party')).not.toBeInTheDocument();
   await userEvent.type(screen.getByLabelText('What you checked and found'),'  DC count sheet shows all cases arrived. ');
   await userEvent.click(screen.getByRole('button',{name:'Submit cause'}));
   await waitFor(()=>expect(sent).toEqual({cause_code:'C4',rationale:'DC count sheet shows all cases arrived.'}));
   await waitFor(()=>expect(screen.queryByRole('heading',{name:'Manual attention required'})).not.toBeInTheDocument());
   expect(screen.getByRole('heading',{name:'Outcome & Approval'})).toBeInTheDocument();
+});
+it('sends the party a reviewer names when the cause is outside C1-C5',async()=>{
+  const handoff={id:oldId,investigation_case_id:caseId,from_status:'investigating',to_status:'handed_off',reason:'Weather claim holds.',actor_user_id:null,agent_run_id:runId,handoff_details:{finding_id:null,findings:null,tools_called:[]},occurred_at:'2026-11-20T12:10:00Z'};
+  const summary={external_fine_id:'FINE-9',metric:'on_time',original_amount:'6.00',po_number:'PO-9',line_number:1,supplier_name:'Cedar Fork Supply'};
+  let sent=null;
+  setup({override:(url,options)=>{
+    if(url.pathname===`/api/domain/v1/investigation-cases/${caseId}/manual-finding`){sent=JSON.parse(options.body);return json({id:oldId,investigation_case_id:caseId,evaluation_id:oldId,status:'pending_approval',created_at:'2026-11-20T12:20:00Z',line_outcomes:[]},201);}
+    if(url.pathname===`/api/domain/v1/investigation-cases/${caseId}`)return json({...caseRecord,summary,status:'handed_off',handoff});
+    return null;
+  }});await login();
+  await userEvent.click(screen.getByRole('button',{name:'Resolve manually'}));
+  expect(screen.getAllByRole('option').map(option=>option.value)).toEqual(['','C1','C2','OTHER']);
+  await userEvent.selectOptions(screen.getByLabelText('Cause'),'OTHER');
+  await userEvent.type(screen.getByLabelText('What you checked and found'),'Storm alert covered the DC.');
+  // Without a party nothing is sent.
+  await userEvent.click(screen.getByRole('button',{name:'Submit cause'}));expect(sent).toBeNull();
+  await userEvent.selectOptions(screen.getByLabelText('Accountable party'),'walmart');
+  await userEvent.click(screen.getByRole('button',{name:'Submit cause'}));
+  await waitFor(()=>expect(sent).toEqual({cause_code:'OTHER',rationale:'Storm alert covered the DC.',accountable_party:'walmart'}));
 });

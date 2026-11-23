@@ -146,6 +146,8 @@ class InvestigationFinding(Base):
     ruled_out_causes: Mapped[list | None] = mapped_column(JSONB)  # [{"cause": "C1", "reason": "..."}]
     agent_run_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True))  # external Agent Service reference
     submitted_by_user_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True))  # set when a reviewer, not the Agent, wrote it
+    # Set only with cause OTHER: the party the reviewer named, since the policy has no rule for it.
+    reviewer_accountable_party: Mapped[str | None] = mapped_column(String(20))
     handoff_required: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
     handoff_reason: Mapped[str | None] = mapped_column(Text)
     injection_detected: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")

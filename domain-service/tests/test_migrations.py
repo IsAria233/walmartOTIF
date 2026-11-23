@@ -27,6 +27,7 @@ def test_revision_chain_and_scrum15_migration_safety_guards():
     assert revisions["0006_dc_country"] == "0005_review_fixes"
     assert revisions["0007_agent_handoff"] == "0006_dc_country"
     assert revisions["0008_finding_author"] == "0007_agent_handoff"
+    assert revisions["0009_reviewer_party"] == "0008_finding_author"
 
     migration = (versions / "0004_scrum15_domain_workflows.py").read_text()
     assert "null or unsupported legacy statuses" in migration

@@ -6,7 +6,7 @@ from decimal import Decimal
 from typing import Annotated, Any, Generic, Literal, TypeVar
 from uuid import UUID
 
-from pydantic import AwareDatetime, BeforeValidator, BaseModel, ConfigDict, Field, StringConstraints, field_validator
+from pydantic import AwareDatetime, BeforeValidator, BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 
 
 class ORMModel(BaseModel):
@@ -104,8 +104,16 @@ class ManualFindingRequest(BaseModel):
     """A reviewer's decision on a handed-off case: the cause and why."""
     model_config = ConfigDict(extra="forbid")
 
-    cause_code: Literal["C1", "C2", "C3", "C4", "C5"]
+    cause_code: Literal["C1", "C2", "C3", "C4", "C5", "OTHER"]
     rationale: str = Field(min_length=1, max_length=4000)
+    # Only with OTHER: the policy assigns the party for C1-C5.
+    accountable_party: Literal["supplier", "walmart"] | None = None
+
+    @model_validator(mode="after")
+    def party_goes_with_other(self):
+        if (self.cause_code == "OTHER") != (self.accountable_party is not None):
+            raise ValueError("accountable_party is required for OTHER and not allowed for C1-C5")
+        return self
 
     @field_validator("rationale")
     @classmethod
@@ -130,6 +138,7 @@ class FindingResponse(BaseModel):
     version_number: int
     agent_run_id: UUID | None
     submitted_by_user_id: UUID | None = None
+    reviewer_accountable_party: str | None = None
     cause_code: str | None
     summary: str | None
     confidence: Decimal | None

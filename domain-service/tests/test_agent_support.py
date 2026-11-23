@@ -175,3 +175,77 @@ def test_a_reviewer_resolves_a_handed_off_case_and_it_goes_to_approval(api, monk
     approval = {"line_outcome_id": line["id"], "stage": "associate", "decision": "approved"}
     assert client.post(f"/api/v1/outcomes/{outcome.json()['id']}/approvals", json=approval, headers=as_reviewer).status_code == 201
     assert client.get(base, headers=as_reviewer).json()["status"] == "closed"
+
+
+@pytest.mark.real_auth
+def test_a_reviewer_records_a_cause_outside_c1_c5_and_names_the_party(api, monkeypatch):
+    monkeypatch.setenv("JWT_SECRET", SECRET)
+    client, case_id = api
+    base, as_reviewer = f"/api/v1/investigation-cases/{case_id}", bearer("compliance_manager")
+    handoff = f"/api/v1/internal/investigation-cases/{case_id}/handoffs/{uuid.uuid4()}"
+    client.put(handoff, json={"reason": "Weather claim holds.", "details": {}}, headers=bearer("agent_service"))
+    other = {"cause_code": "OTHER", "rationale": "Storm alert covered the DC; shipment was on schedule."}
+
+    # OTHER has no rule in the policy, so the reviewer must say who is accountable; C1-C5 must not.
+    assert client.post(f"{base}/manual-finding", json=other, headers=as_reviewer).status_code == 422
+    with_party = {"cause_code": "C4", "rationale": "x", "accountable_party": "walmart"}
+    assert client.post(f"{base}/manual-finding", json=with_party, headers=as_reviewer).status_code == 422
+
+    outcome = client.post(f"{base}/manual-finding", json={**other, "accountable_party": "walmart"}, headers=as_reviewer)
+    assert outcome.status_code == 201, outcome.text
+    line = outcome.json()["line_outcomes"][0]
+    assert (line["accountable_party"], line["outcome"], line["corrected_amount"]) == ("walmart", "waive", "0.00")
+    finding = client.get(f"/api/v1/findings/{line['finding_id']}", headers=as_reviewer).json()
+    assert (finding["cause_code"], finding["reviewer_accountable_party"]) == ("OTHER", "walmart")
+
+
+def test_the_agent_cannot_use_the_other_cause(api):
+    client, case_id = api
+    base = f"/api/v1/investigation-cases/{case_id}"
+    client.patch(f"{base}/status", json={"status": "investigating"})
+    finding = client.post(f"{base}/findings", json={"cause_code": "OTHER", "summary": "Weather.", "agent_run_id": str(uuid.uuid4())})
+    assert finding.status_code == 201
+    # Stored as written, but the rules engine will not compute a result for it.
+    assert client.post(f"{base}/evaluate", json={"finding_id": finding.json()["id"]}).status_code == 409
+
+
+@pytest.mark.real_auth
+def test_a_person_cannot_write_the_steps_of_an_investigation(api, monkeypatch):
+    """Without this a signed-in user could type a finding on a pending case and get a waiver from it."""
+    monkeypatch.setenv("JWT_SECRET", SECRET)
+    client, case_id = api
+    base = f"/api/v1/investigation-cases/{case_id}"
+    for role in ("dispute_associate", "compliance_manager", "admin"):
+        user = bearer(role)
+        assert client.patch(f"{base}/status", json={"status": "investigating"}, headers=user).status_code == 403
+        assert client.post(f"{base}/findings", json={"cause_code": "C4", "facts": []}, headers=user).status_code == 403
+        assert client.post(f"{base}/evaluate", json={"finding_id": str(uuid.uuid4())}, headers=user).status_code == 403
+        assert client.post(f"{base}/outcome", json={"evaluation_id": str(uuid.uuid4())}, headers=user).status_code == 403
+    assert client.patch(f"{base}/status", json={"status": "investigating"}, headers=bearer("agent_service")).status_code == 200
+    # Scan runs are for the admin, not for reviewers or the agent.
+    for role, expected in (("dispute_associate", 403), ("agent_service", 403), ("admin", 200)):
+        assert client.post("/api/v1/pre-invoice-scans/run", json={"scan_id": "scan-1", "fine_record_ids": []}, headers=bearer(role)).status_code == expected
+
+
+def test_the_queue_can_list_the_cases_waiting_at_one_approval_stage(api):
+    from sqlalchemy import update
+
+    from app.db.models import LineOutcome
+
+    client, case_id = api
+    base = f"/api/v1/investigation-cases/{case_id}"
+    client.patch(f"{base}/status", json={"status": "investigating"})
+    finding = client.post(f"{base}/findings", json={"cause_code": "C4", "facts": []}).json()
+    evaluation = client.post(f"{base}/evaluate", json={"finding_id": finding["id"]}).json()
+    client.post(f"{base}/outcome", json={"evaluation_id": evaluation["id"]})
+
+    def waiting(stage):
+        return [row["id"] for row in client.get(f"/api/v1/investigation-cases?status=awaiting_approval&approval_stage={stage}").json()["items"]]
+
+    assert (waiting("associate"), waiting("manager")) == ([case_id], [])
+    # After the associate approves a reversal above the threshold the line waits for the manager.
+    session = next(app.dependency_overrides[get_db]())
+    session.execute(update(LineOutcome).values(approval_status="pending_manager_approval"))
+    session.commit()
+    assert (waiting("associate"), waiting("manager")) == ([], [case_id])
+    assert client.get("/api/v1/investigation-cases?approval_stage=director").status_code == 422
