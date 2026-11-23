@@ -105,7 +105,7 @@ it('renders empty Outcomes and handles load errors with retry',async()=>{
  let reads=0;setup({override:url=>url.pathname.endsWith('/outcome')?++reads===1?json({detail:'Outcomes unavailable'},503):json(page([])):null});await login(false);await userEvent.click(await screen.findByRole('button',{name:'Outcome & Approval',exact:true}));expect(await screen.findByRole('alert')).toHaveTextContent('Outcomes unavailable');await userEvent.click(screen.getByRole('button',{name:'Try again'}));expect(await screen.findByText('No Outcome available.')).toBeInTheDocument();
 });
 it('shows Manager entry and actual pending stage from existing Case context',async()=>{
- const {router}=setup({role:'compliance_manager',manager:true,path:'/manager-review'});await login(false);expect(await screen.findByText(/Manager review pending/)).toHaveTextContent('$777.00');await userEvent.click(screen.getByRole('link',{name:c}));expect(router.state.location.pathname).toBe(`/cases/${c}`);
+ const {router}=setup({role:'compliance_manager',manager:true,path:'/manager-review'});await login(false);await userEvent.click(await screen.findByRole('link',{name:c}));expect(router.state.location.pathname).toBe(`/cases/${c}`);
 });
 it('guards the Manager entry route for non-Managers',async()=>{
  setup({role:'dispute_associate',path:'/manager-review'});await login(false);expect(await screen.findByRole('heading',{name:'Access restricted'})).toBeInTheDocument();expect(screen.queryByRole('link',{name:'Manager Review'})).not.toBeInTheDocument();

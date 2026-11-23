@@ -151,6 +151,7 @@ def case_queue(
     source: str | None = Query(default=None, pattern="^(supplier_dispute|pre_invoice_scan)$"),
     fine_record_id: uuid.UUID | None = None,
     supplier_id: uuid.UUID | None = None, created_from: AwareDatetime | None = None,
+    approval_stage: str | None = Query(default=None, pattern="^(associate|manager)$"),
     created_to: AwareDatetime | None = None, page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100), sort_by: str = Query("created_at", pattern="^(created_at|status|origin)$"),
     sort_order: str = Query("desc", pattern="^(asc|desc)$"), db: Session = Depends(get_db),
@@ -161,7 +162,7 @@ def case_queue(
         raise InvalidRequest("created_from must not be later than created_to")
     items, total = list_cases(db, status=status_filter, origin=origin or source,
         fine_record_id=fine_record_id, supplier_id=supplier_id,
-        created_from=created_from, created_to=created_to, page=page,
+        created_from=created_from, created_to=created_to, approval_stage=approval_stage, page=page,
         page_size=page_size, sort_by=sort_by, sort_order=sort_order)
     return {"items": [{**serialize(item), "summary": case_summary(item)} for item in items],
             "page": page, "page_size": page_size,

@@ -225,3 +225,27 @@ def test_a_person_cannot_write_the_steps_of_an_investigation(api, monkeypatch):
     # Scan runs are for the admin, not for reviewers or the agent.
     for role, expected in (("dispute_associate", 403), ("agent_service", 403), ("admin", 200)):
         assert client.post("/api/v1/pre-invoice-scans/run", json={"scan_id": "scan-1", "fine_record_ids": []}, headers=bearer(role)).status_code == expected
+
+
+def test_the_queue_can_list_the_cases_waiting_at_one_approval_stage(api):
+    from sqlalchemy import update
+
+    from app.db.models import LineOutcome
+
+    client, case_id = api
+    base = f"/api/v1/investigation-cases/{case_id}"
+    client.patch(f"{base}/status", json={"status": "investigating"})
+    finding = client.post(f"{base}/findings", json={"cause_code": "C4", "facts": []}).json()
+    evaluation = client.post(f"{base}/evaluate", json={"finding_id": finding["id"]}).json()
+    client.post(f"{base}/outcome", json={"evaluation_id": evaluation["id"]})
+
+    def waiting(stage):
+        return [row["id"] for row in client.get(f"/api/v1/investigation-cases?status=awaiting_approval&approval_stage={stage}").json()["items"]]
+
+    assert (waiting("associate"), waiting("manager")) == ([case_id], [])
+    # After the associate approves a reversal above the threshold the line waits for the manager.
+    session = next(app.dependency_overrides[get_db]())
+    session.execute(update(LineOutcome).values(approval_status="pending_manager_approval"))
+    session.commit()
+    assert (waiting("associate"), waiting("manager")) == ([], [case_id])
+    assert client.get("/api/v1/investigation-cases?approval_stage=director").status_code == 422

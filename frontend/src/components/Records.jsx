@@ -1,6 +1,7 @@
 import {Link} from 'react-router-dom';
 import {EmptyState, ErrorState, Loading} from './States';
-export const pretty = value => value ? String(value).replaceAll('_', ' ').replace(/^./, c => c.toUpperCase()) : 'Not recorded';
+// Field and type names as labels: po_line -> "PO line", asn -> "ASN".
+export const pretty = value => value ? String(value).replaceAll('_', ' ').replace(/^./, c => c.toUpperCase()).replace(/\b(po|asn|dc|id|mabd|bol|pod)\b/gi, word => word.toUpperCase()) : 'Not recorded';
 /** One record as a labelled list. Nested records are listed inside their field; lists stay as compact JSON. */
 export function Fields({record}) {
   const entries = Object.entries(record || {}).filter(([, value]) => value !== null && value !== '');
@@ -41,8 +42,8 @@ export function ReadState({resource, empty, children}) {
   return children;
 }
 export function CaseTable({items}) {
-  return <div className="tablewrap"><table><caption className="sr-only">Investigation cases</caption><thead><tr><th scope="col">Case</th><th scope="col">PO line</th><th scope="col">Supplier</th><th scope="col">Fine type</th><th scope="col">Fine amount</th><th scope="col">Origin</th><th scope="col">Created</th><th scope="col">Status</th></tr></thead><tbody>{items.map(item => <tr key={item.id}>
-    <td><Link className="link" to={`/cases/${encodeURIComponent(item.id)}`}>{item.summary?.external_fine_id || item.id}</Link>{item.summary?.external_fine_id && <span className="subid record-id">{item.id}</span>}<Link className="subid link" to={`/fines/${encodeURIComponent(item.fine_record_id)}`}>Fine record</Link></td>
+  return <div className="tablewrap"><table><caption className="sr-only">Investigation cases</caption><thead><tr><th scope="col">Case</th><th scope="col">Status</th><th scope="col">PO line</th><th scope="col">Supplier</th><th scope="col">Fine type</th><th scope="col">Fine amount</th><th scope="col">Origin</th><th scope="col">Created</th></tr></thead><tbody>{items.map(item => <tr key={item.id}>
+    <td><Link className="link" to={`/cases/${encodeURIComponent(item.id)}`}>{item.summary?.external_fine_id || item.id}</Link>{item.summary?.external_fine_id && <span className="subid record-id">{item.id}</span>}<Link className="subid link" to={`/fines/${encodeURIComponent(item.fine_record_id)}`}>Fine record</Link></td><td><Status value={item.status}/></td>
     <td>{item.summary ? `${item.summary.po_number} · line ${item.summary.line_number}` : 'Not recorded'}</td><td>{item.summary?.supplier_name || 'Not recorded'}</td><td>{pretty(item.summary?.metric)}</td><td><Money value={item.summary?.original_amount}/></td>
-    <td>{pretty(item.origin)}</td><td><Timestamp value={item.created_at}/></td><td><Status value={item.status}/></td></tr>)}</tbody></table></div>;
+    <td>{pretty(item.origin)}</td><td><Timestamp value={item.created_at}/></td></tr>)}</tbody></table></div>;
 }
