@@ -22,7 +22,7 @@ holds the matching labels by `case_id` and external `fine_id`. Give the Agent
 only the records from `cases.json`. The existing Domain loader accepts that
 file directly.
 
-The checked-in dataset contains 24 cases under OTIF policy v0.2. It covers
+The checked-in dataset contains 24 cases under OTIF policy v0.3. It covers
 C1–C5, injected instructions that are reported while the investigation
 continues, and handoffs for missing receipts or a supported weather claim.
 It also includes R1/R2 pre-invoice flags and reversals on both sides of the
@@ -37,7 +37,8 @@ first revision can coexist with the richer fixtures.
 | An appointment change | Later DC slots and changes that keep the original MABD date |
 | An R2 flag | An overstated ASN with an observed shortage and a complete shipment with late receipt postings |
 | A revised PO | A valid update before shipment and another revision after dispatch |
-| Injected instructions | Supplier message only, attachment only, and both, with the investigation continuing |
+| Injected instructions | Supplier message only, attachment only, and both, in five different wordings (two more appear only in the holdout), with the investigation continuing |
+| Supplier documents | A POD the DC receiver signed with a shortage noted, one signed with no exception, one only the driver signed, and BOLs counted by the shipper or by the carrier |
 | Manager approval | Reversals of $499.80 and $500.40 for each of C2, C4 and C5 |
 
 Generate, validate and test from the repository root.
