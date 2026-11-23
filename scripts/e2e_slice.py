@@ -51,9 +51,9 @@ step("1. Login (auth-service)")
 associate = login("demo_associate")
 
 step("2. Work queue (domain-service)")
-fines = call("GET", f"{DOMAIN}/fine-records", params={"page_size": 100})["items"]
+fines = call("GET", f"{DOMAIN}/fine-records", associate, params={"page_size": 100})["items"]
 fine = next((f for f in fines if f["external_fine_id"] == args.fine), None) or sys.exit(f"No fine {args.fine}")
-queue = call("GET", f"{DOMAIN}/investigation-cases", params={"page_size": 100})["items"]
+queue = call("GET", f"{DOMAIN}/investigation-cases", associate, params={"page_size": 100})["items"]
 case = next((c for c in queue if c["fine_record_id"] == fine["id"]), None) or sys.exit("No open case for that fine")
 print(f"   {len(queue)} cases in the queue; picked {args.fine}: {fine['metric']} fine, "
       f"${fine['original_amount']}, case status {case['status']}, origin {case['origin']}")
@@ -63,7 +63,7 @@ run = call("POST", f"{AGENT}/investigations", associate, json={"case_id": case["
 print(f"   status: {run['status']}   model steps: {run['model_steps']}   run: {run['run_id']}")
 print("   tools:  " + ", ".join(entry["tool"] for entry in run["tool_log"]))
 if run["status"] != "awaiting_approval":
-    handoff = call("GET", f"{DOMAIN}/investigation-cases/{case['id']}").get("handoff") or {}
+    handoff = call("GET", f"{DOMAIN}/investigation-cases/{case['id']}", associate).get("handoff") or {}
     print(f"   handed off: {run.get('handoff_reason') or json.dumps(run.get('domain'))}")
     sys.exit(f"   recorded on the case: {'yes' if handoff.get('agent_run_id') == run['run_id'] else 'NO'}")
 print(f"   paused for approval: {run['paused_for_approval']}")
@@ -79,7 +79,7 @@ if found["injected_instructions"]:
 
 step("4. Rules engine result (domain-service)")
 outcome_id = run["domain"]["outcome_id"]
-outcome = call("GET", f"{DOMAIN}/investigation-cases/{case['id']}/outcome")["items"][0]
+outcome = call("GET", f"{DOMAIN}/investigation-cases/{case['id']}/outcome", associate)["items"][0]
 line = outcome["line_outcomes"][0]
 line = line.get("line_outcome", line)
 print(f"   accountable: {line['accountable_party']}   proposal: {line['outcome']}   "
@@ -90,13 +90,13 @@ decision = {"line_outcome_id": line["id"], "stage": "associate", "decision": "ap
 call("POST", f"{DOMAIN}/outcomes/{outcome_id}/approvals", associate, json=decision)
 run = call("POST", f"{AGENT}/investigations/{run['run_id']}/resume", associate)
 print(f"   associate approved; agent run resumed -> {run['status']} ({run['approval_status']})")
-approvals = call("GET", f"{DOMAIN}/outcomes/{outcome_id}/approvals")["items"]
+approvals = call("GET", f"{DOMAIN}/outcomes/{outcome_id}/approvals", associate)["items"]
 if any(a["approval"]["approval_type"] == "manager" and a["approval"]["status"] == "pending" for a in approvals):
     manager = login("demo_manager")
     call("POST", f"{DOMAIN}/outcomes/{outcome_id}/approvals", manager, json={**decision, "stage": "manager"})
     run = call("POST", f"{AGENT}/investigations/{run['run_id']}/resume", manager)
     print(f"   manager approved (reversal above the threshold); agent run resumed -> {run['status']}")
 
-final = call("GET", f"{DOMAIN}/investigation-cases/{case['id']}")["status"]
+final = call("GET", f"{DOMAIN}/investigation-cases/{case['id']}", associate)["status"]
 print(f"\nCase status: {final}   agent run: {run['status']}")
 sys.exit(0 if final == "closed" and run["status"] == "approved" else 1)

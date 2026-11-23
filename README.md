@@ -39,7 +39,9 @@ The frontend is at `http://localhost:3000`.
 Send `Authorization: Bearer <token>` on every request except login and the
 health checks. The gateway forwards the header. Every domain-service route
 checks it; agent-service calls domain-service with its own short-lived token
-(role `agent_service`), which can do case work and cannot approve.
+(role `agent_service`), which can do case work and cannot approve. Only that role
+may write the steps of an investigation (status, finding, evaluation, outcome);
+only `admin` may create cases, disputes and scan runs.
 
 A handed-off case is resolved by a person: `POST
 /api/domain/v1/investigation-cases/{id}/manual-finding` with `cause_code` and

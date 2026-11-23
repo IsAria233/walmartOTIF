@@ -78,6 +78,21 @@ def require_identity(request: Request) -> dict:
     return claims
 
 
+def _require_role(*allowed: str):
+    def check(claims: dict = Depends(require_identity)) -> dict:
+        if claims["role"] not in allowed:
+            raise HTTPException(status_code=403, detail={"error": {"code": "forbidden",
+                "message": f"Role {claims['role']} cannot use this route"}})
+        return claims
+    return check
+
+
+# The steps of an investigation (status, finding, evaluation, outcome, handoff) are written by
+# agent-service only. A person's way in is /manual-finding and /approvals, which record who acted.
+agent_only = _require_role(SERVICE_ROLE)
+# Creating cases, disputes and scan runs is system administration.
+admin_only = _require_role("admin")
+
 router = APIRouter(prefix="/api/v1", dependencies=[Depends(require_identity)])
 
 
@@ -153,7 +168,7 @@ def case_queue(
             "total": total, "total_pages": math.ceil(total / page_size) if total else 0}
 
 
-@router.post("/investigation-cases", response_model=CaseResponse)
+@router.post("/investigation-cases", response_model=CaseResponse, dependencies=[Depends(admin_only)])
 def create_case(payload: CaseCreateRequest, response: Response, db: Session = Depends(get_db)):
     with db.begin():
         case, created = get_or_create_active_case(db, **payload.model_dump())
@@ -169,7 +184,7 @@ def get_case(case_id: uuid.UUID, db: Session = Depends(get_db)):
     return {**serialize(case), "summary": case_summary(case), "handoff": current_handoff(db, case)}
 
 
-@router.patch("/investigation-cases/{case_id}/status", response_model=CaseResponse)
+@router.patch("/investigation-cases/{case_id}/status", response_model=CaseResponse, dependencies=[Depends(agent_only)])
 def patch_case_status(case_id: uuid.UUID, payload: CaseStatusRequest, db: Session = Depends(get_db)):
     with db.begin():
         case = transition_case(db, case_id=case_id, target=payload.status, reason=payload.reason)
@@ -177,13 +192,8 @@ def patch_case_status(case_id: uuid.UUID, payload: CaseStatusRequest, db: Sessio
 
 
 # Service-to-service only: the gateway does not route /internal paths, and only agent-service's role is accepted.
-@router.put("/internal/investigation-cases/{case_id}/handoffs/{run_id}", response_model=CaseStatusEventResponse)
-def put_agent_handoff(
-    case_id: uuid.UUID, run_id: uuid.UUID, payload: AgentHandoffRequest,
-    claims: dict = Depends(require_identity), db: Session = Depends(get_db),
-):
-    if claims["role"] != SERVICE_ROLE:
-        raise HTTPException(status_code=403, detail={"error": {"code": "forbidden", "message": "Only agent-service records handoffs"}})
+@router.put("/internal/investigation-cases/{case_id}/handoffs/{run_id}", response_model=CaseStatusEventResponse, dependencies=[Depends(agent_only)])
+def put_agent_handoff(case_id: uuid.UUID, run_id: uuid.UUID, payload: AgentHandoffRequest, db: Session = Depends(get_db)):
     with db.begin():
         event = record_agent_handoff(
             db, case_id=case_id, run_id=run_id, reason=payload.reason,
@@ -192,7 +202,7 @@ def put_agent_handoff(
     return event
 
 
-@router.post("/disputes", response_model=DisputeDetailResponse, status_code=201)
+@router.post("/disputes", response_model=DisputeDetailResponse, status_code=201, dependencies=[Depends(admin_only)])
 def post_dispute(payload: DisputeCreateRequest, db: Session = Depends(get_db)):
     with db.begin():
         dispute = submit_dispute(db, **payload.model_dump())
@@ -210,7 +220,7 @@ def get_dispute(dispute_id: uuid.UUID, db: Session = Depends(get_db)):
             "attachments": [serialize(item) for item in dispute.attachments]}
 
 
-@router.post("/investigation-cases/{case_id}/findings", response_model=FindingResponse, status_code=201)
+@router.post("/investigation-cases/{case_id}/findings", response_model=FindingResponse, status_code=201, dependencies=[Depends(agent_only)])
 def post_finding(case_id: uuid.UUID, payload: FindingCreateRequest, db: Session = Depends(get_db)):
     with db.begin():
         finding = create_finding(db, case_id=case_id, payload=payload.model_dump())
@@ -240,7 +250,7 @@ def get_finding(finding_id: uuid.UUID, db: Session = Depends(get_db)):
     return finding_response(db, finding)
 
 
-@router.post("/investigation-cases/{case_id}/evaluate", response_model=EvaluationResponse, status_code=201)
+@router.post("/investigation-cases/{case_id}/evaluate", response_model=EvaluationResponse, status_code=201, dependencies=[Depends(agent_only)])
 def post_evaluation(case_id: uuid.UUID, payload: EvaluationCreateRequest, db: Session = Depends(get_db)):
     with db.begin():
         evaluation = create_evaluation(db, case_id=case_id, **payload.model_dump())
@@ -265,7 +275,7 @@ def get_evaluation(evaluation_id: uuid.UUID, db: Session = Depends(get_db)):
     return item
 
 
-@router.post("/investigation-cases/{case_id}/outcome", response_model=OutcomeDetailResponse, status_code=201)
+@router.post("/investigation-cases/{case_id}/outcome", response_model=OutcomeDetailResponse, status_code=201, dependencies=[Depends(agent_only)])
 def post_outcome(case_id: uuid.UUID, payload: OutcomeCreateRequest, db: Session = Depends(get_db)):
     with db.begin():
         outcome = create_outcome(db, case_id=case_id, **payload.model_dump())
@@ -358,7 +368,7 @@ def get_approvals(outcome_id: uuid.UUID, page: int = Query(1, ge=1), page_size: 
     return page_data
 
 
-@router.post("/pre-invoice-scans/run", response_model=ScanResponse)
+@router.post("/pre-invoice-scans/run", response_model=ScanResponse, dependencies=[Depends(admin_only)])
 def post_scan(payload: ScanRequest, db: Session = Depends(get_db)):
     with db.begin():
         result = run_scan(db, **payload.model_dump())

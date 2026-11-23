@@ -207,3 +207,21 @@ def test_the_agent_cannot_use_the_other_cause(api):
     assert finding.status_code == 201
     # Stored as written, but the rules engine will not compute a result for it.
     assert client.post(f"{base}/evaluate", json={"finding_id": finding.json()["id"]}).status_code == 409
+
+
+@pytest.mark.real_auth
+def test_a_person_cannot_write_the_steps_of_an_investigation(api, monkeypatch):
+    """Without this a signed-in user could type a finding on a pending case and get a waiver from it."""
+    monkeypatch.setenv("JWT_SECRET", SECRET)
+    client, case_id = api
+    base = f"/api/v1/investigation-cases/{case_id}"
+    for role in ("dispute_associate", "compliance_manager", "admin"):
+        user = bearer(role)
+        assert client.patch(f"{base}/status", json={"status": "investigating"}, headers=user).status_code == 403
+        assert client.post(f"{base}/findings", json={"cause_code": "C4", "facts": []}, headers=user).status_code == 403
+        assert client.post(f"{base}/evaluate", json={"finding_id": str(uuid.uuid4())}, headers=user).status_code == 403
+        assert client.post(f"{base}/outcome", json={"evaluation_id": str(uuid.uuid4())}, headers=user).status_code == 403
+    assert client.patch(f"{base}/status", json={"status": "investigating"}, headers=bearer("agent_service")).status_code == 200
+    # Scan runs are for the admin, not for reviewers or the agent.
+    for role, expected in (("dispute_associate", 403), ("agent_service", 403), ("admin", 200)):
+        assert client.post("/api/v1/pre-invoice-scans/run", json={"scan_id": "scan-1", "fine_record_ids": []}, headers=bearer(role)).status_code == expected
