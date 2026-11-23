@@ -1,0 +1,28 @@
+# Use with root docker-compose.yml and a separate --env-file containing test-only
+# credentials. Always use project name otif-frontend-verify, never the shared stack.
+services:
+  auth-service:
+    image: walmartotif-auth-service:latest
+    env_file: !override []
+    environment:
+      JWT_SECRET: ${JWT_SECRET}
+      AUTH_DEMO_PASSWORD_HASH: ${AUTH_DEMO_PASSWORD_HASH}
+  domain-service:
+    image: walmartotif-domain-service:latest
+    env_file: !override []
+    environment:
+      JWT_SECRET: ${JWT_SECRET}
+  agent-service:
+    image: walmartotif-agent-service:latest
+    env_file: !override []
+    environment:
+      JWT_SECRET: ${JWT_SECRET}
+      ANTHROPIC_API_KEY: ""
+      LANGFUSE_PUBLIC_KEY: ""
+      LANGFUSE_SECRET_KEY: ""
+  gateway:
+    image: walmartotif-gateway:latest
+    ports: !override ["127.0.0.1:18080:80"]
+  frontend:
+    image: otif-frontend-verify:latest
+    ports: !override ["127.0.0.1:13000:80"]

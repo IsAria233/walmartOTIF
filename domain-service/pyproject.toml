@@ -25,3 +25,4 @@ package = false
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+markers = ["real_auth: the test sends real bearer tokens instead of the signed-in test identity"]

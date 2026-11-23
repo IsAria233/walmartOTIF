@@ -38,7 +38,7 @@ def api():
         po = PurchaseOrder(po_number=f"PO-{uuid.uuid4()}", distribution_center=dc,
                            supplier=Supplier(supplier_code=f"s-{uuid.uuid4()}", name="Supplier"))
         fine = FineRecord(po_line=POLine(purchase_order=po, line_number=1), po_version_used=1, ordered_cases=10,
-                          received_cases=8, non_compliant_cases=2, system_accountability="supplier",
+                          received_cases=8, non_compliant_cases=2, system_accountability="supplier", metric="in_full",
                           original_amount=Decimal("0.60"), case_cost_snapshot=Decimal("10.0000"),
                           fine_rate=Decimal("0.030000"))
         case = InvestigationCase(fine_record=fine, origin="pre_invoice_scan", scan_rule="R2", status="pending")
@@ -78,6 +78,12 @@ def test_agent_handoff_is_recorded_once_and_shown_on_the_case(api):
     case = client.get(f"/api/v1/investigation-cases/{case_id}").json()
     assert case["status"] == "handed_off"
     assert case["handoff"]["reason"] == "Gate log missing."
+    # The case and its queue row carry readable identifiers, so a list need not show UUIDs.
+    row = client.get("/api/v1/investigation-cases").json()["items"][0]
+    assert row["summary"] == case["summary"]
+    assert row["summary"]["po_number"].startswith("PO-")
+    assert (row["summary"]["supplier_name"], row["summary"]["line_number"]) == ("Supplier", 1)
+    assert row["summary"]["original_amount"] == "0.60"
     assert case["handoff"]["agent_run_id"] == run_id
     assert case["handoff"]["handoff_details"]["findings"]["cause"] == "HANDOFF"
 
@@ -110,3 +116,62 @@ def test_a_retried_agent_run_reuses_its_finding_evaluation_and_outcome(api):
     assert client.post(f"{base}/outcome", json=outcome_body).json()["id"] == outcome["id"]
     # Without the flag the second call is still a conflict, as before.
     assert client.post(f"{base}/outcome", json={"evaluation_id": evaluation["id"]}).status_code == 409
+
+
+SECRET = "test-secret-with-at-least-32-bytes!!"
+
+
+def bearer(role: str, sub: str | None = None) -> dict:
+    import jwt
+    from datetime import timedelta
+    claims = {"sub": sub or str(uuid.uuid4()), "role": role, "exp": datetime.now(timezone.utc) + timedelta(minutes=5)}
+    return {"Authorization": "Bearer " + jwt.encode(claims, SECRET, algorithm="HS256")}
+
+
+@pytest.mark.real_auth
+def test_every_route_needs_a_token_and_only_the_agent_records_handoffs(api, monkeypatch):
+    monkeypatch.setenv("JWT_SECRET", SECRET)
+    client, case_id = api
+    assert client.get("/api/v1/fine-records").status_code == 401
+    assert client.get(f"/api/v1/investigation-cases/{case_id}", headers={"Authorization": "Bearer nope"}).status_code == 401
+    assert client.get("/api/v1/fine-records", headers=bearer("supplier")).status_code == 403
+    assert client.get("/api/v1/fine-records", headers=bearer("admin")).status_code == 200
+
+    path = f"/api/v1/internal/investigation-cases/{case_id}/handoffs/{uuid.uuid4()}"
+    body = {"reason": "Gate log missing.", "details": {}}
+    assert client.put(path, json=body, headers=bearer("dispute_associate")).status_code == 403
+    assert client.put(path, json=body, headers=bearer("agent_service")).status_code == 200
+
+
+@pytest.mark.real_auth
+def test_a_reviewer_resolves_a_handed_off_case_and_it_goes_to_approval(api, monkeypatch):
+    monkeypatch.setenv("JWT_SECRET", SECRET)
+    client, case_id = api
+    base, reviewer = f"/api/v1/investigation-cases/{case_id}", str(uuid.uuid4())
+    as_reviewer = bearer("dispute_associate", reviewer)
+    decision = {"cause_code": "C4", "rationale": "DC count sheet shows all 10 cases arrived."}
+
+    # Not before the case is handed off, and not by a role that cannot approve.
+    assert client.post(f"{base}/manual-finding", json=decision, headers=as_reviewer).status_code == 409
+    handoff = f"/api/v1/internal/investigation-cases/{case_id}/handoffs/{uuid.uuid4()}"
+    client.put(handoff, json={"reason": "Receipts missing.", "details": {}}, headers=bearer("agent_service"))
+    assert client.post(f"{base}/manual-finding", json=decision, headers=bearer("admin")).status_code == 403
+    assert client.post(f"{base}/manual-finding", json=decision, headers=bearer("agent_service")).status_code == 403
+    # The fine is in-full, so an on-time cause is refused; so is an empty reason.
+    assert client.post(f"{base}/manual-finding", json={**decision, "cause_code": "C1"}, headers=as_reviewer).status_code == 422
+    assert client.post(f"{base}/manual-finding", json={**decision, "rationale": "  "}, headers=as_reviewer).status_code == 422
+    assert client.get(base, headers=as_reviewer).json()["status"] == "handed_off"
+
+    outcome = client.post(f"{base}/manual-finding", json=decision, headers=as_reviewer)
+    assert outcome.status_code == 201, outcome.text
+    line = outcome.json()["line_outcomes"][0]
+    # The reviewer chose the cause; the rules engine chose the party and the amounts.
+    assert (line["accountable_party"], line["outcome"], line["reversal_amount"]) == ("walmart", "waive", "0.60")
+    assert client.get(base, headers=as_reviewer).json()["status"] == "awaiting_approval"
+    finding = client.get(f"/api/v1/findings/{line['finding_id']}", headers=as_reviewer).json()
+    assert (finding["cause_code"], finding["submitted_by_user_id"], finding["agent_run_id"]) == ("C4", reviewer, None)
+    assert finding["summary"] == decision["rationale"]
+    # It still needs a person's approval before the case closes.
+    approval = {"line_outcome_id": line["id"], "stage": "associate", "decision": "approved"}
+    assert client.post(f"/api/v1/outcomes/{outcome.json()['id']}/approvals", json=approval, headers=as_reviewer).status_code == 201
+    assert client.get(base, headers=as_reviewer).json()["status"] == "closed"
