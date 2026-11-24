@@ -1,0 +1,30 @@
+# Server settings, layered over the root docker-compose.yml. Use deploy/compose.sh.
+#
+# Only the frontend is published. Its Nginx forwards /api to the gateway inside
+# the Docker network, so the gateway, the services and Postgres are not
+# reachable from outside.
+x-server: &server
+  restart: unless-stopped
+  # Keep container logs bounded; read them with `deploy/compose.sh logs <service>`.
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "5"
+
+services:
+  db:
+    <<: *server
+  auth-service:
+    <<: *server
+  domain-service:
+    <<: *server
+  agent-service:
+    <<: *server
+  gateway:
+    <<: *server
+    ports: !reset []
+  frontend:
+    <<: *server
+    ports: !override
+      - "80:80"

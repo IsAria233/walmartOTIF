@@ -28,7 +28,8 @@ from app.domain_client import DomainClient, DomainError
 from app.tracing import investigation_trace, observation, plain, trace_id_for
 from app.tools import CAUSES_BY_METRIC, SUBMIT_TOOL, record_keys, run_tool, tool_definitions
 
-MODEL = os.getenv("AGENT_MODEL", "claude-haiku-5-5")
+# An empty AGENT_MODEL, as in a copied .env.example, means the default too.
+MODEL = os.getenv("AGENT_MODEL") or "claude-haiku-5-5"
 MAX_MODEL_STEPS = int(os.getenv("AGENT_MAX_STEPS", "8"))
 APPROVAL_PENDING = {"pending_approval", "pending_manager_approval"}
 POLICY = (Path(__file__).parent / "policy" / "otif_policy.md").read_text()
